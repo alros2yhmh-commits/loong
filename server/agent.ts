@@ -155,7 +155,15 @@ export function toModelMessages(history: HistoryTurn[]): ModelMessage[] {
    SDK is ever swapped, this is the file that changes and nothing else.
    --------------------------------------------------------------------------- */
 
-const MAX_STEPS = 40
+/* The step budget. A chat turn needs a dozen steps; a benchmark task
+   (SWE-bench, Terminal-Bench) needs hundreds, and the harness knows which.
+   LOONG_MAX_STEPS makes it the caller's decision; the default stays small
+   because a small budget is what keeps a thrashing run from burning a day. */
+const MAX_STEPS = (() => {
+  const raw = Number(process.env.LOONG_MAX_STEPS ?? 40)
+  if (!Number.isFinite(raw)) return 40
+  return Math.min(1000, Math.max(5, Math.floor(raw)))
+})()
 /* four attempts, not three: a shared free tier can stay saturated for ten
    seconds, and giving up after 6.5s is what made a healthy run look dead */
 const MAX_ATTEMPTS = 4

@@ -57,3 +57,21 @@ test('no console window is left un-hidden on Windows', async () => {
   const block = src.slice(at, at + 400)
   assert.ok(block.includes('windowsHide: true'), 'the probe must hide its console')
 })
+
+test('the headless CLI refuses a task-less run with a usage line', async () => {
+  /* a benchmark harness parses stdout; a missing --task must be exit 2 and a
+     usage line on stderr, never a silent half-run */
+  const { execFile } = await import('node:child_process')
+  const { promisify } = await import('node:util')
+  const run = promisify(execFile)
+  const r = await run(
+    process.execPath,
+    ['--experimental-strip-types', 'server/start.ts', 'run'],
+    { cwd: new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'), windowsHide: true },
+  ).then(
+    () => ({ code: 0, stderr: '' }),
+    (e: { code?: number; stderr?: string }) => ({ code: e.code ?? 1, stderr: e.stderr ?? '' }),
+  )
+  assert.equal(r.code, 2)
+  assert.match(r.stderr, /usage: loong-agent run --task/)
+})
