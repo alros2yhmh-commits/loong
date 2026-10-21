@@ -89,20 +89,27 @@ check('agent sidecar online (gate answers, unsigned refused)', health === 'gate-
 
 /* ---- 2. the renderer ------------------------------------------------------ */
 
-const browser = await waitFor(async () => {
-  const b = await chromium.connectOverCDP(CDP).catch(() => null)
-  return b
-}, { what: 'the CDP endpoint' })
-const context = browser.contexts()[0]
-const page = await waitFor(
+/* the app may relaunch itself once (a renderer that cannot start under the
+   sandbox), so the CDP connection is re-established inside the wait — a
+   handle taken from the dying first instance would never see the new window */
+const opened = await waitFor(
   async () => {
-    for (const p of context.pages()) {
-      if (p.url().startsWith('file://') && p.url().includes('index.html')) return p
+    const b = await chromium.connectOverCDP(CDP).catch(() => null)
+    if (!b) return null
+    for (const c of b.contexts()) {
+      for (const p of c.pages()) {
+        if (p.url().startsWith('file://') && p.url().includes('index.html')) {
+          return { browser: b, page: p }
+        }
+      }
     }
+    await b.close().catch(() => {})
     return null
   },
-  { what: 'the app window' },
+  { what: 'the app window', timeout: 60_000 },
 )
+const browser = opened.browser
+const page = opened.page
 
 const consoleErrors = []
 page.on('console', (m) => {

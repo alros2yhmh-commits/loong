@@ -398,6 +398,34 @@ async function createWindow() {
 
   const url = frontUrl()
   diag(`loading ${url}`)
+
+  /* A renderer that cannot start under the sandbox leaves a dead window —
+     the "double-click and nothing happens" failure. One relaunch without the
+     sandbox, recorded in loong.log, is better than an app that never opens;
+     the next launch is still sandboxed unless this machine fails again. */
+  let recovered = false
+  const recover = (why) => {
+    if (recovered || sandboxOff) return
+    recovered = true
+    diag(`renderer could not start (${why}) — relaunching once with ${SANDBOX_OFF_ARG}`)
+    app.relaunch({ args: process.argv.slice(1).concat(SANDBOX_OFF_ARG) })
+    app.exit(0)
+  }
+  win.webContents.on('render-process-gone', (_e, d) =>
+    recover(`render-process-gone: ${d?.reason ?? 'unknown'}`),
+  )
+  win.webContents.on('did-fail-load', (_e, code, desc) =>
+    recover(`did-fail-load: ${code} ${desc}`),
+  )
+  /* the renderer can also stall without an event: no load, no crash, no
+     window. Fifteen seconds of nothing is the same failure. */
+  const loadWatchdog = setTimeout(() => {
+    if (!win.webContents.isLoading() && win.webContents.getURL() === '') {
+      recover('the renderer never loaded a page')
+    }
+  }, 15_000)
+  win.webContents.once('did-finish-load', () => clearTimeout(loadWatchdog))
+
   await win.loadURL(url)
 }
 
@@ -490,12 +518,32 @@ app.disableHardwareAcceleration()
    that parses model output and fetched pages ran unsandboxed on every machine,
    always, to spare a few from a startup crash. It is now the operator's
    decision, written down — LOONG_NO_SANDBOX=1 — and the default keeps the
-   sandbox the platform offers. */
-if (process.env.LOONG_NO_SANDBOX === '1') {
-  diag('LOONG_NO_SANDBOX=1 — Chromium sandbox disabled by explicit request')
+   sandbox the platform offers.
+
+   A machine that cannot start the sandboxed renderer must still open the app,
+   so the decision is also made FOR the reader once, out loud: if the renderer
+   dies during startup, the app relaunches itself once with --loong-no-sandbox
+   (see the renderer hooks in createWindow) and says so in loong.log. The
+   default stays secure; the exception is recorded, not silent. */
+const SANDBOX_OFF_ARG = '--loong-no-sandbox'
+const sandboxOff =
+  process.env.LOONG_NO_SANDBOX === '1' || process.argv.includes(SANDBOX_OFF_ARG)
+if (sandboxOff) {
+  diag(
+    process.argv.includes(SANDBOX_OFF_ARG)
+      ? 'relaunched without the sandbox after a renderer startup failure'
+      : 'LOONG_NO_SANDBOX=1 — Chromium sandbox disabled by explicit request',
+  )
   app.commandLine.appendSwitch('no-sandbox')
 }
 app.commandLine.appendSwitch('disable-gpu-compositing')
+/* The GPU process gets its own sandbox, and on machines where that process
+   cannot start at all (no usable adapter, some VMs, remote sessions) Chromium
+   dies with "GPU process isn't usable" BEFORE a window exists. Disabling the
+   sandbox for the GPU process alone is the narrow answer: it never renders
+   model output or page content, and the renderer's sandbox — the one P-8 is
+   about — stays on. */
+app.commandLine.appendSwitch('disable-gpu-sandbox')
 
 app.whenReady().then(() => {
   installMenu()

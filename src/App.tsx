@@ -7,6 +7,7 @@ import { Noise } from './components/Noise'
 import { Rail } from './components/Rail'
 import { Resizer } from './components/Resizer'
 import { RunBar } from './components/RunBar'
+import { RunStatus } from './components/RunStatus'
 import { Settings } from './components/Settings'
 import { Thread } from './components/Thread'
 import { ThreadDrawer } from './components/ThreadDrawer'
@@ -1283,6 +1284,9 @@ export default function App() {
               </motion.div>
             )}
           </AnimatePresence>
+
+          {/* the run, spoken — the interface was silent to a screen reader */}
+          <RunStatus running={stream.running} blocks={stream.blocks} error={stream.error} />
 
           {(goal || stream.running) && (
             <div className="px-[24px] pt-[8px]">

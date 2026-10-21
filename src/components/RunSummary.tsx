@@ -60,10 +60,22 @@ export function RunSummary({
   let checksOk: boolean | null = null
   let checksOutput = ''
   let errors = 0
+  /** the step budget stop, when the run hit it — a stop, not a failure.
+      A holder object: an assignment inside forEach is invisible to the
+      compiler's narrowing, which turns a plain let into never here. */
+  const stepStopRef: { current: { used: number; budget: number } | null } = { current: null }
 
   blocks.forEach((b, index) => {
     if (b.k === 'error') {
       errors += 1
+      return
+    }
+    /* the step-limit notice is a stop with a reason: the summary says
+       "stopped", never the grey "failed" that hid this case all along */
+    if (b.k === 'notice' && /step budget/i.test(b.text)) {
+      const m = /(\d+)\s*steps?\s*used/i.exec(b.text)
+      const b2 = /(\d+)-step/.exec(b.text)
+      stepStopRef.current = { used: m ? Number(m[1]) : 0, budget: b2 ? Number(b2[1]) : 0 }
       return
     }
     if (b.k !== 'tool') return
@@ -108,7 +120,13 @@ export function RunSummary({
   const runFailed = errors > 0 || checksOk === false
   const totalMs = spans.reduce((sum, s) => sum + s.ms, 0)
   const done = spans.filter((s) => !s.live).length
-  const status = running ? 'running' : runFailed ? 'failed' : 'done'
+  const status = running
+    ? 'running'
+    : runFailed
+      ? 'failed'
+      : stepStopRef.current
+        ? 'stopped'
+        : 'done'
 
   const progress = spans.length ? (running ? done / spans.length : 1) : 0
 
@@ -126,15 +144,33 @@ export function RunSummary({
           className="mono shrink-0 text-[10px] tracking-[0.08em] uppercase"
           style={{ color: status === 'failed' ? 'var(--text-1)' : 'var(--text-3)' }}
         >
-          {status === 'failed' ? 'run · failed' : status === 'running' ? 'run · live' : 'run'}
+          {status === 'failed'
+            ? 'run · failed'
+            : status === 'running'
+              ? 'run · live'
+              : status === 'stopped'
+                ? 'run · stopped'
+                : 'run'}
         </span>
 
         <span className="mono min-w-0 flex-1 truncate text-[11px]" style={{ color: 'var(--text-2)' }}>
           {spans.length} {spans.length === 1 ? 'tool' : 'tools'}
           {toolFails > 0 && ` · ${toolFails} failed`}
           {files.size > 0 && ` · ${files.size} ${files.size === 1 ? 'file' : 'files'}`}
+          {stepStopRef.current &&
+            ` · ${stepStopRef.current.used}/${stepStopRef.current.budget || '?'} steps`}
           {totalMs > 0 && ` · ${formatMs(totalMs)}`}
         </span>
+
+        {stepStopRef.current && (
+          <span
+            className="mono shrink-0 text-[10.5px]"
+            style={{ color: 'var(--text-2)' }}
+            title={`The run used its ${stepStopRef.current.budget}-step budget — the work done is real, the task needed more turns.`}
+          >
+            budget reached
+          </span>
+        )}
 
         {checksOk !== null && (
           <span

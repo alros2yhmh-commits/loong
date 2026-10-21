@@ -26,6 +26,13 @@ export function ToolCard({ call, result }: ToolCardProps) {
 
   const running = !result
   const failed = result !== undefined && !result.ok
+  /* the failure is visible without opening the card: a refused tool whose
+     reason lives behind a click is a failure the reader never learns about */
+  const failLine = (() => {
+    if (!failed || !result) return ''
+    const line = (result.output ?? '').split('\n').find((l) => l.trim()) ?? ''
+    return line.length > 150 ? `${line.slice(0, 150)}…` : line
+  })()
 
   const statusColor = running
     ? 'var(--text-3)'
@@ -107,6 +114,19 @@ export function ToolCard({ call, result }: ToolCardProps) {
           <IconChevron size={13} />
         </motion.span>
       </button>
+
+      {/* the reason a tool failed, on the card itself — not behind a click.
+          a refused write whose error is invisible is how a run "succeeds"
+          while nothing landed. */}
+      {failed && failLine && !open && (
+        <div
+          className="mono truncate px-[10px] pb-[7px] text-[10.5px]"
+          style={{ color: 'var(--text-3)' }}
+          title={failLine}
+        >
+          {failLine}
+        </div>
+      )}
 
       {/* a single hairline that sweeps while the tool is out. no spinner, no
           skeleton, no shimmer — one line, moving. */}

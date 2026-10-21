@@ -703,6 +703,16 @@ export async function runAgent(opts: RunOptions): Promise<void> {
     return true
   })
 
+  /* The edit retry budget.
+     A run today spent 288 tool calls refusing the same imprecise oldText over
+     and over on one file — each refusal was individually correct and the sum
+     was a dead run. So: a file that refuses the same kind of edit twice gets
+     a third answer that is not a hint but an instruction — read the file
+     before writing to it again. The budget is per run and per file; it never
+     blocks the FIRST good-faith attempt, and it resets when the file is read. */
+  const editFails = new Map<string, number>()
+  const EDIT_FAIL_BUDGET = 2
+
   const toolStartedAt = new Map<string, number>()
 
   /* A tool that produces a picture returns a `SHOT:` marker. The wrapper below
@@ -856,7 +866,29 @@ export async function runAgent(opts: RunOptions): Promise<void> {
           }
           /* everything a tool returns is data: fenced so the model can see the
              edge of it, whichever tool it came from */
-          return frameUntrustedOutput(name, typeof out === 'string' ? out : JSON.stringify(out))
+          const framed = frameUntrustedOutput(
+            name,
+            typeof out === 'string' ? out : JSON.stringify(out),
+          )
+          /* the edit budget: a file that refused an edit twice does not get a
+             third hint — it gets told to read itself first */
+          if (
+            (name === 'edit_file' || name === 'multi_edit') &&
+            EDIT_REFUSAL.test(typeof out === 'string' ? out : '')
+          ) {
+            const file = String((input as { path?: string }).path ?? '?')
+            const fails = (editFails.get(file) ?? 0) + 1
+            editFails.set(file, fails)
+            if (fails > EDIT_FAIL_BUDGET) {
+              editFails.set(file, 0)
+              return `${framed}\n\n${editBudgetMessage(file, fails)}`
+            }
+          }
+          /* a read resets the budget: the model has fresh eyes on the file */
+          if (name === 'read_file') {
+            editFails.delete(String((input as { path?: string }).path ?? '?'))
+          }
+          return framed
         } finally {
           lease?.release()
         }
@@ -1202,6 +1234,7 @@ export async function runAgent(opts: RunOptions): Promise<void> {
         stream: for await (const part of result.fullStream) {
           switch (part.type) {
           case 'start-step':
+            stepsUsed += 1
             noteStep(runId)
             emit({ type: EventType.STEP_STARTED, stepName: 'step', ...base(runId, threadId) } as BaseEvent)
             break
@@ -1506,6 +1539,9 @@ export async function runAgent(opts: RunOptions): Promise<void> {
 
   /* hoisted so the finally block can tell the trace how the run ended */
   let fatal: string | null = null
+  /** steps this run has spent — the budget is MAX_STEPS, and hitting it is a
+      stop with a reason, not a grey failure */
+  let stepsUsed = 0
   /* the model that actually ran the last attempt — the interface shows the
      truth (the model that ran), not the saved setting (the model chosen) */
   let lastModel = opts.config.model
@@ -1600,12 +1636,34 @@ export async function runAgent(opts: RunOptions): Promise<void> {
         ...base(runId, threadId),
       } as BaseEvent)
     } else {
+      /* the step budget is a stop, not a failure: the work done is real, the
+         task simply needed more turns than the run was allowed. The interface
+         says so, instead of the grey "run failed" that hid this exact case. */
+      const budgetSpent = stepsUsed >= MAX_STEPS
       emit({
         type: EventType.CUSTOM,
         name: 'loong.stop',
-        value: { reason: opts.abortSignal?.aborted ? 'aborted' : 'completed', model: lastModel },
+        value: {
+          reason: opts.abortSignal?.aborted
+            ? 'aborted'
+            : budgetSpent
+              ? 'step-limit'
+              : 'completed',
+          model: lastModel,
+          ...(budgetSpent ? { steps: stepsUsed, budget: MAX_STEPS } : {}),
+        },
         ...base(runId, threadId),
       } as BaseEvent)
+      if (budgetSpent) {
+        emit({
+          type: EventType.CUSTOM,
+          name: 'loong.notice',
+          value: {
+            text: `Stopped at the ${MAX_STEPS}-step budget (${stepsUsed} steps used) — the task needed more turns. Send "continue" to pick it up, or split the task into smaller pieces.`,
+          },
+          ...base(runId, threadId),
+        } as BaseEvent)
+      }
     }
   } finally {
     detach()
@@ -1715,6 +1773,26 @@ export async function runAgent(opts: RunOptions): Promise<void> {
 const REPETITION_ERROR =
   'The model fell into a repetition loop (the same sentence repeated dozens of times) and the run was stopped before it drained tokens. Retrying on a different model.'
 
+/* ---------------------------------------------------------------------------
+   The edit retry budget, exported so a test can hold the contract.
+
+   A refused edit is correct on its own; two hundred refused edits on one file
+   is a dead run. The budget is enforced in the tool wrapper (per run, per
+   file); these two symbols are its whole surface.
+   --------------------------------------------------------------------------- */
+
+/** the shapes of refusal the edit engine produces */
+export const EDIT_REFUSAL = /the exact text was not found|appears \d+ times|overlap —/i
+
+/** what a blown budget says — an instruction, not another hint */
+export function editBudgetMessage(file: string, fails: number): string {
+  return (
+    `[edit budget] "${file}" has refused ${fails} edits this run. STOP editing it. ` +
+    `Call read_file on it NOW, copy the text you need from the result, and only then ` +
+    `retry the edit. Do not guess the text from memory.`
+  )
+}
+
 /**
  * True when a model has turned into a loop. Two cheap signals:
  *  - a short line repeated many times (the observed failure: one sentence ~40x)
@@ -1752,6 +1830,8 @@ export type RunCause =
   | 'capability' /* the model can never run here (harness-gated, batch, live) */
   | 'repetition' /* the model looped on itself */
   | 'tool' /* a tool refused and the run could not continue */
+  | 'steps' /* the run hit its step budget — work done, task not */
+  | 'security' /* the security gate stopped the run on a real finding */
   | 'internal' /* something on our side */
 
 /**
@@ -1768,6 +1848,10 @@ export function causeOf(error: string | null): RunCause {
   }
   if (/repetition|repeating|loop/i.test(m)) return 'repetition'
   if (m === EMPTY_RESPONSE_MESSAGE || /returned (an )?empty response/i.test(m)) return 'model-empty'
+  /* the budget stop and the security stop are ours, and they are not bugs:
+     say them plainly rather than filing them under "internal" */
+  if (/step budget|step limit|stepCountIs|too many steps/i.test(m)) return 'steps'
+  if (/security gate|security scan|critical finding/i.test(m)) return 'security'
   if (isRetryable(m) || /refused|rate|429|50[0-4]|ECONN|fetch failed|timed? ?out/i.test(m)) {
     return 'provider'
   }

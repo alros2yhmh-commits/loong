@@ -1,0 +1,55 @@
+{
+  "checks": [
+    {
+      "name": "agent sidecar online (gate answers, unsigned refused)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "renderer painted (root has children)",
+      "ok": true,
+      "detail": "root children=1"
+    },
+    {
+      "name": "preload bridge yielded a session token",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "health 200 with the token",
+      "ok": true,
+      "detail": "status 200"
+    },
+    {
+      "name": "workspace reported",
+      "ok": true,
+      "detail": "C:\\Users\\Hamza\\Desktop\\LOONG"
+    },
+    {
+      "name": "file index answers (@mention feed)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "session created (201)",
+      "ok": true,
+      "detail": "id 7acf9191-78a5-490c-9eee-0d025a0b3e12"
+    },
+    {
+      "name": "session renamed (200)",
+      "ok": true,
+      "detail": "smoke check"
+    },
+    {
+      "name": "rename persisted to disk",
+      "ok": true,
+      "detail": "smoke check"
+    },
+    {
+      "name": "session deleted",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "tokenGate": "fail-closed"
+}
