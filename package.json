@@ -1,0 +1,110 @@
+{
+  "name": "loong",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "author": "Loong",
+  "description": "Loong — a desktop AI agent app. UI-first build against a frozen event contract.",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "concurrently -k -n vite,agent -c cyan,magenta \"vite\" \"node server/start.ts\"",
+    "dev:front": "vite",
+    "dev:agent": "node server/start.ts",
+    "build": "tsc --noEmit && tsc -p tsconfig.server.json && vite build && node scripts/build-agent.mjs",
+    "build:electron": "electron-builder --dir",
+    "build:exe": "electron-builder",
+    "test": "node --test --experimental-test-coverage --import tsx ./tests/*.test.ts",
+    "lint": "tsc --noEmit",
+    "shoot": "node scripts/shoot.mjs",
+    "shoot:live": "node scripts/shoot-live.mjs",
+    "verify": "node scripts/verify-v2.mjs",
+    "verify:interactive": "node scripts/verify-interactive.mjs",
+    "postinstall": "patch-package"
+  },
+  "dependencies": {
+    "@ag-ui/client": "^1.0.3",
+    "@ag-ui/core": "^1.0.3",
+    "@ag-ui/encoder": "^1.0.3",
+    "@ai-sdk/anthropic": "^4.0.81",
+    "@ai-sdk/google": "^4.0.98",
+    "@ai-sdk/mcp": "^2.0.77",
+    "@ai-sdk/openai": "^4.0.95",
+    "@ai-sdk/openai-compatible": "^3.0.70",
+    "@hono/node-server": "^2.1.5",
+    "@tauri-apps/plugin-shell": "^2.5.0",
+    "ai": "^7.0.142",
+    "esbuild": "^0.28.2",
+    "hono": "^4.13.13",
+    "jsfxr": "^1.4.1",
+    "motion": "^14.3.0",
+    "node-pty": "^1.1.0",
+    "pixelmatch": "^5.3.0",
+    "playwright-core": "^1.64.1",
+    "pngjs": "^7.0.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-markdown": "^10.1.0",
+    "rehype-sanitize": "^6.0.0",
+    "remark-gfm": "^4.0.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^22.10.5",
+    "@types/pixelmatch": "^5.2.6",
+    "@types/pngjs": "^6.0.5",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "electron": "^33.3.1",
+    "electron-builder": "^25.1.8",
+    "patch-package": "^8.0.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "vitest": "^3.0.0"
+  },
+  "build": {
+    "appId": "com.loong.agent",
+    "productName": "Loong",
+    "directories": {
+      "output": "app"
+    },
+    "asar": false,
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist-agent",
+        "to": "agent"
+      },
+      {
+        "from": "dist-agent/browsers.json",
+        "to": "browsers.json"
+      },
+      {
+        "from": "dist-agent/package.json",
+        "to": "package.json"
+      }
+    ],
+    "npmRebuild": false,
+    "electronDist": "node_modules/electron/dist",
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "oneClick": true,
+      "perMachine": false,
+      "shortcutName": "Loong"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  /* The server was invisible to the old config — it only covered `src`. Code
+     that never goes through tsc is code that can ship a reference to a name
+     that does not exist, which is exactly what happened. This config is the
+     fix: the agent runtime is typechecked as strictly as the interface. */
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "types": ["node"]
+  },
+  "include": ["server", "tests"]
+}
