@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DATA_DIR, getWorkspace } from './config.ts'
+import { SKILLS_FENCE_CLOSE, SKILLS_FENCE_OPEN, escapeFence } from './rules.ts'
 
 /* ---------------------------------------------------------------------------
    Skills — ready-made expertise, injected only when it is relevant.
@@ -187,12 +188,21 @@ export function selectSkills(text: string, limit = 3): Skill[] {
   return scored.slice(0, limit).map((x) => x.s)
 }
 
-/** the block appended to the system prompt for this task (empty when none fit) */
+/** the block appended to the system prompt for this task (empty when none fit)
+ *
+ *  A skill file is a file in the workspace, so it is untrusted input like any
+ *  other: it arrives fenced, and the cap is applied to the body so the fence
+ *  itself is never the part that gets cut off. */
 export function skillsBlock(text: string, cap = 3200): string {
   if (!text.trim()) return ''
   const picked = selectSkills(text)
   if (picked.length === 0) return ''
-  let out = '\n\n--- skills (follow these when they apply) ---'
-  for (const s of picked) out += `\n\n## ${s.name}\n${s.body}`
-  return out.length > cap ? `${out.slice(0, cap)}\n…` : out
+  let body = ''
+  for (const s of picked) body += `\n\n## ${s.name}\n${s.body}`
+  body = escapeFence(body, SKILLS_FENCE_CLOSE)
+  const wrap = (b: string): string => `${SKILLS_FENCE_OPEN}\n${b}\n${SKILLS_FENCE_CLOSE}`
+  const out = wrap(body)
+  if (out.length <= cap) return out
+  const room = Math.max(0, cap - (SKILLS_FENCE_OPEN.length + SKILLS_FENCE_CLOSE.length + 4))
+  return wrap(`${body.slice(0, room)}\n…`)
 }
