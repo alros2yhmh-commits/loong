@@ -46,3 +46,14 @@ test('the old classifications did not move', () => {
   assert.equal(causeOf('the model fell into a repetition loop'), 'repetition')
   assert.equal(causeOf(null), 'internal')
 })
+
+test('no console window is left un-hidden on Windows', async () => {
+  /* the where.exe probe had stdio:ignore but no windowsHide — stdio only
+     silences the child, the console still opens and flashes */
+  const { readFileSync } = await import('node:fs')
+  const src = readFileSync(new URL('../server/tools.ts', import.meta.url), 'utf8')
+  const at = src.indexOf('execFileSync(process.platform')
+  assert.ok(at > 0, 'the ripgrep probe must still exist')
+  const block = src.slice(at, at + 400)
+  assert.ok(block.includes('windowsHide: true'), 'the probe must hide its console')
+})

@@ -45,12 +45,16 @@ function ThinkingBlock({ text, live }: { text: string; live: boolean }) {
   const preview = text.replace(/\s+/g, ' ').trim().slice(0, 90)
   return (
     <div
-      className="overflow-hidden rounded-[7px]"
-      style={{ border: '1px solid var(--line-2)', background: 'var(--surface-sunken)' }}
+      className="overflow-hidden rounded-[6px]"
+      /* flat on the canvas — no sunken box, no border. The reasoning row used
+         to read as a terminal strip (dark box + mono text) that appeared and
+         vanished with every message; as a quiet line it is information, not an
+         alarm. */
+      style={{ background: 'transparent' }}
     >
       <button
         type="button"
-        className="ctl flex w-full items-center gap-[9px] px-[10px] py-[6px] text-left"
+        className="ctl flex w-full items-center gap-[9px] px-[2px] py-[4px] text-left"
         onClick={() => setOpen((v) => !v)}
         title="Show or hide the reasoning"
         aria-expanded={open}

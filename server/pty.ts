@@ -57,7 +57,13 @@ function ensure(runId: string): ShellSession {
     /* ConPTY is the working path on this machine. Its console-list helper
        (a forked child) prints "AttachConsole failed" when the shell exits
        under a GUI parent — noise in the log, not a crash. winpty, the
-       alternative, hangs here, so it is not an option. */
+       alternative, hangs here, so it is not an option.
+
+       NOTE ON THE WINDOW: node-pty creates a real console host (conhost) and
+       has no windowsHide option — on Windows 11 that console can appear for a
+       moment when the shell starts and when it is killed at the end of a run.
+       It only happens when the model actually uses the terminal tool, never
+       per message; the shell tool (one-shot commands) is fully hidden. */
   })
 
   const session: ShellSession = { proc, buffer: '', exited: false }

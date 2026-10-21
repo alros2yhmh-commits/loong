@@ -670,7 +670,10 @@ export default function App() {
   const wasRunning = useRef(false)
   useEffect(() => {
     if (wasRunning.current && !stream.running) {
-      setToast(stream.error ? 'the run stopped' : 'the run finished')
+      /* a successful end needs no toast: the run summary in the thread already
+         says it, and a dark pill that appears and vanishes after every single
+         message reads as a terminal flashing. Only a STOP is worth a word. */
+      if (stream.error) setToast('the run stopped')
       if (document.hidden) {
         notify('Loong', stream.error ? 'the run stopped on an error' : 'the run finished')
       }

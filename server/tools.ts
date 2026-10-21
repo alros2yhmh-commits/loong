@@ -107,7 +107,12 @@ function ripgrep(): ExecFileLike | null {
       const { execFileSync } = require('node:child_process') as typeof import('node:child_process')
       try {
         execFileSync(process.platform === 'win32' ? 'where' : 'which', ['rg'], {
+          /* stdio:ignore silences the child; it does NOT hide the console
+             window it opens. Without windowsHide every first grep flashed a
+             console (Windows Terminal on Win11) — the "terminal opens and
+             closes" the user kept seeing. */
           stdio: 'ignore',
+          windowsHide: true,
         })
         ripgrepExists = true
       } catch {
