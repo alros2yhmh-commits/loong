@@ -1135,10 +1135,17 @@ export async function runAgent(opts: RunOptions): Promise<void> {
   /* the model chain: the chosen model first, then models that can do the same
      job. A saturated free tier is a busy resource, not a dead app — so the
      second attempt goes somewhere instead of into the same wall. */
-  const modelChain = [
-    opts.config.model,
-    ...MODEL_FALLBACKS[opts.config.provider].filter((m) => m !== opts.config.model),
-  ]
+  /* The fallback chain exists for one reason: a shared FREE tier is a busy
+     resource, not a dead app. It is not a licence to overrule the reader.
+     A paid model chosen by hand (stepfun/…, deepseek/…) is a decision, and a
+     refused call must say so — the run used to slide onto openai/gpt-oss-20b
+     and poolside/laguna, which read as "Loong changed my model". So: fall back
+     only when the chosen model is free, or the provider is the local one. */
+  const chosen = opts.config.model
+  const mayFallBack = mayFallBackFor(chosen, opts.config.provider)
+  const modelChain = mayFallBack
+    ? [chosen, ...MODEL_FALLBACKS[opts.config.provider].filter((m) => m !== chosen)]
+    : [chosen]
   /** the model this attempt runs on: the chosen one, then the fallbacks in order */
   const modelFor = (attempt: number): string =>
     modelChain[Math.min(attempt - 1, modelChain.length - 1)]
@@ -1780,6 +1787,14 @@ export async function runAgent(opts: RunOptions): Promise<void> {
 
 const REPETITION_ERROR =
   'The model fell into a repetition loop (the same sentence repeated dozens of times) and the run was stopped before it drained tokens. Retrying on a different model.'
+
+/** A run may slide onto another model only when the chosen one is free (a
+ *  shared quota is a busy resource) or local (nothing to bill). A paid model
+ *  chosen by hand is a decision: a refused call must say so, never quietly
+ *  become gpt-oss-20b:free — that is "Loong changed my model". */
+export function mayFallBackFor(model: string, provider: string): boolean {
+  return /:free$/i.test(model) || provider === 'ollama'
+}
 
 /* ---------------------------------------------------------------------------
    The edit retry budget, exported so a test can hold the contract.

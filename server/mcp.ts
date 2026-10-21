@@ -6,6 +6,24 @@ import { join } from 'node:path'
 import { DATA_DIR } from './config.ts'
 
 /* ---------------------------------------------------------------------------
+   The console window every MCP server used to open.
+
+   The SDK decides `windowsHide` with `isElectron()`, which is literally
+   `"type" in process`. Under ELECTRON_RUN_AS_NODE the agent IS Electron's node
+   mode but carries no `process.type`, so the check read false and every stdio
+   server — connected again on every run — spawned a real console window that
+   flashed and vanished: the "terminal opens and closes" the user kept seeing.
+   The check reads the key; setting it here is truthful, not a trick.
+   --------------------------------------------------------------------------- */
+if (
+  process.platform === 'win32' &&
+  process.versions.electron &&
+  !('type' in process)
+) {
+  Object.defineProperty(process, 'type', { value: 'browser', configurable: true })
+}
+
+/* ---------------------------------------------------------------------------
    MCP — other people's tools, under our gate.
 
    An agent that cannot reach the systems a person actually uses is a demo. MCP

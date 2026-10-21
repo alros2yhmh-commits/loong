@@ -75,3 +75,14 @@ test('the headless CLI refuses a task-less run with a usage line', async () => {
   assert.equal(r.code, 2)
   assert.match(r.stderr, /usage: loong-agent run --task/)
 })
+
+test('a hand-picked paid model is never overruled by the free fallback chain', async () => {
+  const { mayFallBackFor } = await import('../server/agent.ts')
+  /* a decision stays a decision */
+  assert.equal(mayFallBackFor('stepfun/step-5-preview', 'openrouter'), false)
+  assert.equal(mayFallBackFor('deepseek/deepseek-v4.1-flash', 'openrouter'), false)
+  assert.equal(mayFallBackFor('gemini-3-flash-preview', 'google'), false)
+  /* a free quota is a busy resource, not a dead app */
+  assert.equal(mayFallBackFor('cohere/north-mini-code:free', 'openrouter'), true)
+  assert.equal(mayFallBackFor('qwen3:8b', 'ollama'), true)
+})
