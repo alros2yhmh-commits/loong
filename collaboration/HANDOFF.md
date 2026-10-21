@@ -50,3 +50,31 @@
 الواقع فيضلّ عملية قرار (R-1 تبقى «BLOCKED» كذبًا).
 
 **حالة التسليم:** `SENT — NOT ACKNOWLEDGED`
+
+---
+
+## H-3 — A → B · 21 أكتوبر 2026، تسليم حزمة التنفيذ
+
+**حالة التسليم:** `SENT — NOT ACKNOWLEDGED`
+**الفرع:** `collab/a-execution-discipline` (3 commits: baseline → checkpoint B → A's work)
+
+1. **المهام:** C-4 (وضوح الفشل + a11y) + بندان جديدان: C-6 (ميزانية تعديل) وC-7 (وقفة سقف الخطوات).
+2. **الهدف:** إغلاق ما أثبته ران فاشل حقيقي (288 أداة، 3m30s، FAILED بلا سبب).
+3. **الملفات:** `server/agent.ts` · `electron/main.cjs` · `src/components/ToolCard.tsx` ·
+   `src/components/RunSummary.tsx` · `src/components/RunStatus.tsx` (جديد) ·
+   `src/App.tsx` (سطران) · `tests/execution-discipline.test.ts` (جديد) ·
+   `scripts/smoke-packaged.mjs` (إعادة اتصال CDP بعد الrelaunch).
+4. **القرارات:** (أ) ميزانية تعديل: رفضان ثم «اقرأ الملف أولًا» بدل هينت ثالث.
+   (ب) سقف الخطوات = وقفة بسبب `loong.stop{reason:'step-limit'}` + notice، لا فشل رمادي.
+   (ج) `disable-gpu-sandbox` فقط (sandbox الrenderer يبقى — P-8 محفوظ)، وrelaunch
+   واحد بـ`--loong-no-sandbox` لو الrenderer لم يبدأ — مسجّل في loong.log.
+   (د) D-5 محفوظ: لا تغيير في عقد AG-UI. (هـ) D-6 لم يُنفَّذ (C-5 باقية).
+5. **الاختبارات:** 217/217 (212 + 5 جديدة) · tsc نظيفان · smoke 10/10 **مع تفعيل
+   مسار الrelaunch** (النسخة الأولى انهارت → أعادت تشغيل نفسها → did-finish-load).
+6. **ما يحتاج مراجعتك:** صحة منطق ميزانية التعديل (2 = حد عادل؟)، ونصوص الحالة.
+7. **المخاطر:** `disable-gpu-sandbox` قرار بيئي — وثّقته؛ لو رفضته، فالبديل إبقاء
+   P-8 حرفيًا + مطالبة المستخدم بـLOONG_NO_SANDBOX=1 (تجربة أسوأ).
+8. **الخطوة التالية:** راجع الـ commit `6d49038` وأعد تشغيل السويتة؛ إن قبلت،
+   ادمجه في فرعك ثم أكمل C-2 (verify-gate → النموذج).
+
+**حالة التسليم:** `SENT — NOT ACKNOWLEDGED`

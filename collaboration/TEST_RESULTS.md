@@ -37,3 +37,22 @@
 
 - `node --test --import tsx "tests/*.test.ts"` → 206/206 (شُغّل مرتين في هذه الجلسة؛ مرة واحدة أظهرت 205/186 لحظيًا أثناء كتابة B — عاد للاخضرار فورًا، لا مخالفة)
 - `npx tsc -p tsconfig.server.json` + `tsc --noEmit` → نضيفان (من التدقيق السابق؛ لم يُعد تشغيلهما في هذه الجلسة)
+
+---
+
+## A's delivery — C-4 / C-6 / C-7 (21 أكتوبر، فرع collab/a-execution-discipline)
+
+| # | الفحص | الأمر | النتيجة | التصنيف |
+|---|---|---|---|---|
+| 1 | السويتة الكاملة | `node --test --import tsx "tests/*.test.ts"` | 217/217 | PASS |
+| 2 | النوعيات | `tsc -p tsconfig.server.json` + `tsc --noEmit` | نظيفان | PASS |
+| 3 | اختباراتي الخمسة | `tests/execution-discipline.test.ts` | 5/5 | PASS |
+| 4 | الحزمة | `electron-builder --win dir` | نجحت | PASS |
+| 5 | smoke | `scripts/smoke-packaged.mjs` | 10/10، **بعد مسار relaunch حقيقي** | PASS |
+| 6 | الميزات في الباقة المسلّمة | فحص strings في `LoongApp/resources` | الأربعة موجودة | PASS |
+| 7 | Flow لم يُمَس | — | لم ألمسه | PASS |
+
+**ملاحظة تشغيلية (اكتشاف):** بناء LOONG (بإصلاح P-8: sandbox شغّال) **لا يقلع** في
+بيئة بلا GPU/renderer sandbox — `GPU process isn't usable` ثم renderer crash. البناء
+القديم (Flow) كان يشتغل لأن `no-sandbox` مدمج. الحل المُنفَّذ: `disable-gpu-sandbox`
+(GPU فقط) + relaunch واحد عند فشل الrenderer، مسجّل — لا تعطيل صامت للأمان.
