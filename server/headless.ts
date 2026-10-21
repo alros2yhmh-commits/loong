@@ -36,6 +36,8 @@ interface Args {
   provider: ProviderId
   model: string
   key?: string
+  /** an OpenAI-compatible local server (LM Studio, llama.cpp, vLLM) */
+  baseUrl?: string
   steps: number
   timeout: number
   diff?: string
@@ -50,7 +52,7 @@ function parseArgs(argv: string[]): Args {
   const task = get('task')
   if (!task) {
     process.stderr.write(
-      'usage: loong-agent run --task "<prompt>" [--workspace dir] [--provider openrouter] [--model id] [--steps 150] [--timeout 900] [--diff out.patch] [--json]\n',
+      'usage: loong-agent run --task "<prompt>" [--workspace dir] [--provider openrouter] [--model id] [--key k] [--base-url url] [--steps 150] [--timeout 900] [--diff out.patch] [--json]\n',
     )
     process.exit(2)
   }
@@ -60,6 +62,7 @@ function parseArgs(argv: string[]): Args {
     provider: (get('provider') as ProviderId) ?? 'openrouter',
     model: get('model') ?? 'cohere/north-mini-code:free',
     key: get('key'),
+    baseUrl: get('base-url'),
     steps: Number(get('steps') ?? process.env.LOONG_MAX_STEPS ?? 40),
     timeout: Number(get('timeout') ?? 900),
     diff: get('diff'),
@@ -67,10 +70,19 @@ function parseArgs(argv: string[]): Args {
   }
 }
 
-/** the final diff of a workspace, as a patch a harness can apply */
+/** the final diff of a workspace, as a patch a harness can apply.
+ *  `git diff` alone is blind to NEW files (untracked), and a benchmark task
+ *  usually creates one — so the working tree is staged first and the staged
+ *  diff is read. The index is the harness's, not the user's: a headless run
+ *  owns its workspace. */
 async function workspacePatch(dir: string): Promise<string> {
   try {
-    const { stdout } = await execFileAsync('git', ['diff', '--no-color'], {
+    await execFileAsync('git', ['add', '-A'], {
+      cwd: dir,
+      windowsHide: true,
+      maxBuffer: 16 * 1024 * 1024,
+    })
+    const { stdout } = await execFileAsync('git', ['diff', '--cached', '--no-color'], {
       cwd: dir,
       windowsHide: true,
       maxBuffer: 16 * 1024 * 1024,
@@ -91,6 +103,7 @@ export async function main(argv: string[]): Promise<void> {
     provider: a.provider,
     model: a.model,
     ...(a.key ? { apiKey: a.key } : {}),
+    ...(a.baseUrl ? { baseUrl: a.baseUrl } : {}),
   }
 
   const runId = randomUUID()
