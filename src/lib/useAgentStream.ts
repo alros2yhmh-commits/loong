@@ -298,6 +298,18 @@ export function useAgentStream({
     [sessionId, patch],
   )
 
+  /** restore a thread from its snapshot — the whole run, not just the words */
+  const loadBlocks = useCallback(
+    (blocks: Block[]) => {
+      const target = sessionId ?? 'local'
+      const current = runsRef.current[target]
+      /* a live column is newer than storage — never overwrite a run in flight */
+      if (current?.running) return
+      patch(target, () => ({ ...emptyRun(), blocks }))
+    },
+    [sessionId, patch],
+  )
+
   const reset = useCallback(
     (id?: string) => {
       const target = id ?? sessionId ?? 'local'
@@ -455,6 +467,7 @@ export function useAgentStream({
     stop,
     retry,
     load,
+    loadBlocks,
     reset,
     inject,
     resolveApproval,

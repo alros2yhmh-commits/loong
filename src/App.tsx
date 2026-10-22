@@ -194,6 +194,18 @@ export default function App() {
   secondaryRef.current = secondary
 
   const stream = splitFocus === 'secondary' && splitId ? secondary : primary
+
+  /* the run is saved as it stands. Closing the app mid-run, or switching away
+     from the thread, used to lose every tool Loong had called — the thread
+     came back as prose with the work missing. The snapshot is debounced while
+     it streams and written the moment the run settles. */
+  useEffect(() => {
+    if (!activeId || stream.blocks.length === 0) return
+    const save = () => void api.saveThreadBlocks(activeId, stream.blocks).catch(() => {})
+    const t = setTimeout(save, 900)
+    if (!stream.running) save()
+    return () => clearTimeout(t)
+  }, [stream.blocks, stream.running, activeId])
   const streamRef = useRef(stream)
   streamRef.current = stream
 
@@ -208,6 +220,18 @@ export default function App() {
     setActiveId(id)
     setLoadingThread(true)
     try {
+      /* the run comes back first — the tools, the approvals, the plan. Only
+         when there is no snapshot does the thread fall back to the words. */
+      const { blocks } = await api.threadBlocks(id)
+      if (blocks && blocks.length > 0) {
+        setActiveId((current) => {
+          if (current === id) {
+            primaryRef.current.loadBlocks(blocks as Parameters<typeof primaryRef.current.loadBlocks>[0])
+          }
+          return current
+        })
+        return
+      }
       const { messages } = await api.messages(id)
       /* the reader may have clicked elsewhere while this was in flight */
       setActiveId((current) => {
@@ -438,8 +462,10 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    document.documentElement.dataset.theme = settings.theme
-  }, [settings.theme])
+    /* one look: the attribute exists so the token file has a single source of
+       truth, and it is always dark */
+    document.documentElement.dataset.theme = 'dark'
+  }, [])
 
   useEffect(() => {
     sound.setEnabled(settings.soundEnabled)
@@ -1169,8 +1195,6 @@ export default function App() {
           onOpenSettings={() => setSettingsOpen(true)}
           soundOn={settings.soundEnabled}
           onToggleSound={toggleSound}
-          theme={settings.theme}
-          onToggleTheme={() => set('theme', settings.theme === 'dark' ? 'light' : 'dark')}
           onSelect={(s) => {
             sound.play('select')
             void openThread(s.id)

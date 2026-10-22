@@ -467,21 +467,8 @@ export function Settings({
               <Section
                 id="appearance"
                 title="Appearance"
-                note="One monochrome ramp, read from either end. There is no accent colour to configure."
+                note="One warm monochrome ramp — Claude Desktop's grade with Loong's engraving. One look, no accent colour to configure."
               >
-                <Row label="Theme">
-                  <div className="flex gap-[5px]">
-                    {(['dark', 'light'] as const).map((t) => (
-                      <Chip
-                        key={t}
-                        active={settings.theme === t}
-                        onClick={() => set('theme', t)}
-                      >
-                        {t === 'dark' ? 'Dark' : 'Light'}
-                      </Chip>
-                    ))}
-                  </div>
-                </Row>
                 <Row label="Thread text">
                   <Slider
                     value={settings.threadFontSize}

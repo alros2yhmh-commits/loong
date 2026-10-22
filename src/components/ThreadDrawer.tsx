@@ -336,12 +336,6 @@ export function Row({
               </span>
             )}
           </div>
-          <p
-            className="mt-[2px] truncate text-[11px]"
-            style={{ color: 'var(--text-4)' }}
-          >
-            {session.preview}
-          </p>
         </>
       )}
     </motion.div>

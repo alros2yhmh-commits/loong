@@ -31,8 +31,6 @@ export function Sidebar({
   onOpenSettings,
   soundOn,
   onToggleSound,
-  theme,
-  onToggleTheme,
   onSelect,
   onRename,
   onDelete,
@@ -48,13 +46,13 @@ export function Sidebar({
   onOpenSettings: () => void
   soundOn: boolean
   onToggleSound: () => void
-  theme: 'dark' | 'light'
-  onToggleTheme: () => void
   onSelect: (s: Session) => void
   onRename: (id: string, title: string) => void
   onDelete: (id: string) => void
 }) {
   const [query, setQuery] = useState('')
+  /* projects fold. A workspace with forty threads is a wall otherwise. */
+  const [folded, setFolded] = useState<Set<string>>(new Set())
 
   const groups = useMemo(() => {
     const current = workspace ? folderOf({ workspace } as Session) : null
@@ -73,6 +71,16 @@ export function Sidebar({
       return (a ?? 'zzz').localeCompare(b ?? 'zzz')
     })
   }, [sessions, workspace, query])
+
+  const fold = (project: string | null) => {
+    const key = project ?? 'none'
+    setFolded((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
   if (!open) {
     /* collapsed: a single rail-shaped grip that opens it, nothing else */
@@ -184,13 +192,30 @@ export function Sidebar({
         )}
         {groups.map(([project, rows]) => (
           <div key={project ?? 'none'} className="mb-[6px]">
-            <p
-              className="mono px-[8px] pb-[3px] pt-[7px] text-[9.5px] tracking-[0.08em] uppercase"
-              style={{ color: 'var(--text-4)' }}
+            <button
+              type="button"
+              onClick={() => fold(project)}
+              className="ctl flex w-full items-center gap-[5px] rounded-[5px] px-[8px] pb-[3px] pt-[7px] text-left"
+              aria-expanded={!folded.has(project ?? 'none')}
             >
-              {project ?? 'no project'} · {rows.length}
-            </p>
-            {rows.map((s, i) => (
+              <motion.span
+                animate={{ rotate: folded.has(project ?? 'none') ? -90 : 0 }}
+                transition={{ duration: 0.12 }}
+                className="block"
+              >
+                <svg width="8" height="8" viewBox="0 0 16 16" fill="none" aria-hidden>
+                  <path d="M4 6l4 4 4-4" stroke="var(--text-4)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </motion.span>
+              <span
+                className="mono text-[9.5px] tracking-[0.08em] uppercase"
+                style={{ color: 'var(--text-4)' }}
+              >
+                {project ?? 'no project'} · {rows.length}
+              </span>
+            </button>
+            {!folded.has(project ?? 'none') &&
+            rows.map((s, i) => (
               <Row
                 key={s.id}
                 session={s}
@@ -234,22 +259,6 @@ export function Sidebar({
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
             <path d="M3 6.2v3.6h2.2L8.4 12V4L5.2 6.2H3z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
             {soundOn && <path d="M10.4 5.6a3.4 3.4 0 010 4.8M12.2 3.8a6 6 0 010 8.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />}
-          </svg>
-        </button>
-        <button
-          type="button"
-          onClick={onToggleTheme}
-          className="ctl grid h-[28px] w-[28px] place-items-center rounded-[7px]"
-          style={{ color: 'var(--text-3)' }}
-          title={theme === 'dark' ? 'Dark' : 'Light'}
-          aria-label="Toggle theme"
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
-            {theme === 'dark' ? (
-              <path d="M13 9.6A5.6 5.6 0 016.4 3a5.6 5.6 0 106.6 6.6z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
-            ) : (
-              <circle cx="8" cy="8" r="3.2" stroke="currentColor" strokeWidth="1.3" />
-            )}
           </svg>
         </button>
       </footer>

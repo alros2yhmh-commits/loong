@@ -183,6 +183,14 @@ export const api = {
       }
     }>('/api/traces'),
   sessions: () => json<{ sessions: ServerSession[] }>('/api/sessions'),
+  /** the run of a thread — tools, approvals, plans — not just the words */
+  threadBlocks: (id: string) =>
+    json<{ blocks: unknown[] | null }>(`/api/threads/${encodeURIComponent(id)}/blocks`),
+  saveThreadBlocks: (id: string, blocks: unknown[]) =>
+    json<{ ok: boolean }>(`/api/threads/${encodeURIComponent(id)}/blocks`, {
+      method: 'PUT',
+      body: JSON.stringify({ blocks }),
+    }),
   createSession: (input: { title?: string; provider?: string; model?: string; workspace?: string }) =>
     json<{ session: ServerSession }>('/api/sessions', {
       method: 'POST',

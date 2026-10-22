@@ -37,6 +37,7 @@ import {
   listSessions,
   renameSession,
 } from './db.ts'
+import { loadBlocks, saveBlocks, deleteBlocks } from './threads.ts'
 import { pendingApprovals, resolveApproval, pendingQuestions, resolveQuestion } from './approvals.ts'
 
 /* ---------------------------------------------------------------------------
@@ -145,7 +146,9 @@ app.use(
   }),
 )
 
-app.use('*', bodyLimit({ maxSize: 2 * 1024 * 1024 }))
+/* 8MB: a thread snapshot carries the run — tool outputs, diffs, plans. The
+   socket is loopback and token-gated, so the guard is against accidents. */
+app.use('*', bodyLimit({ maxSize: 8 * 1024 * 1024 }))
 
 /* ---- rate limiting ----------------------------------------------------- */
 
@@ -249,6 +252,25 @@ app.post('/api/sessions', async (c) => {
 
 app.delete('/api/sessions/:id', (c) => {
   deleteSession(c.req.param('id'))
+  deleteBlocks(c.req.param('id'))
+  return c.json({ ok: true })
+})
+
+/* ---- thread snapshots: the run itself, not just the conversation --------- */
+
+app.get('/api/threads/:id/blocks', (c) => {
+  const id = c.req.param('id')
+  if (!getSession(id)) return c.json({ error: 'no such session' }, 404)
+  const blocks = loadBlocks(id)
+  return blocks ? c.json({ blocks }) : c.json({ blocks: null })
+})
+
+app.put('/api/threads/:id/blocks', async (c) => {
+  const id = c.req.param('id')
+  if (!getSession(id)) return c.json({ error: 'no such session' }, 404)
+  const body = await c.req.json().catch(() => null)
+  if (!body || !Array.isArray(body.blocks)) return c.json({ error: 'blocks must be an array' }, 400)
+  saveBlocks(id, body.blocks.slice(0, 5000))
   return c.json({ ok: true })
 })
 
