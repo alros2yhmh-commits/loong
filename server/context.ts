@@ -55,7 +55,24 @@ export function compactHistory(history: HistoryTurn[]): HistoryTurn[] {
  * not need all of it in context; it can re-read the file. Cap each result so a
  * long session stays affordable, while the verbatim transcript the UI shows is
  * never touched.
+ *
+ * The cap keeps the HEAD AND THE TAIL. A head-only cut is wrong for exactly
+ * the results that matter: a failing test's answer is its last line, and a
+ * build error's last frame is the cause. Dropping the tail throws away the
+ * part the model reads twice.
  */
+function clipToolOutput(output: string): string {
+  if (output.length <= MAX_TOOL_OUTPUT) return output
+  const head = Math.floor(MAX_TOOL_OUTPUT * 0.7)
+  const tail = MAX_TOOL_OUTPUT - head - 90
+  const omitted = output.length - head - tail
+  return (
+    output.slice(0, head) +
+    `\n… (${omitted} chars omitted — the tail is kept because it holds the answer) …\n` +
+    output.slice(output.length - tail)
+  )
+}
+
 function truncateToolOutputs(history: HistoryTurn[]): HistoryTurn[] {
   return history.map((t) => {
     if (!t.toolResults?.length) return t
@@ -63,12 +80,7 @@ function truncateToolOutputs(history: HistoryTurn[]): HistoryTurn[] {
     const toolResults = t.toolResults.map((r) => {
       if (typeof r.output === 'string' && r.output.length > MAX_TOOL_OUTPUT) {
         changed = true
-        return {
-          ...r,
-          output:
-            r.output.slice(0, MAX_TOOL_OUTPUT) +
-            `\n… (output truncated to ${MAX_TOOL_OUTPUT} chars — read the file or re-run the tool to see the rest)`,
-        }
+        return { ...r, output: clipToolOutput(r.output) }
       }
       return r
     })
@@ -83,30 +95,48 @@ function truncateToolOutputs(history: HistoryTurn[]): HistoryTurn[] {
  * listed by name and a one-line result; prose is truncated to its first
  * sentence. This is what the model reads instead of the raw transcript.
  */
+/** a summary that grows without a cap is a second context problem: a hundred
+ *  old turns would produce a summary bigger than the turns it replaced. The
+ *  oldest detail is dropped first — it is the least relevant to the next turn. */
+const MAX_SUMMARY_CHARS = 6_000
+
 function summarize(turns: HistoryTurn[]): HistoryTurn {
   const parts: string[] = ['[Earlier conversation, summarized to fit the context window.]']
+  let spent = 0
+  let dropped = 0
+  const push = (line: string) => {
+    if (spent + line.length > MAX_SUMMARY_CHARS) {
+      dropped += 1
+      return
+    }
+    spent += line.length
+    parts.push(line)
+  }
 
   for (const turn of turns) {
     if (turn.role === 'user') {
       const snippet = turn.content.slice(0, 200).trim()
-      if (snippet) parts.push(`User asked: ${snippet}${turn.content.length > 200 ? '…' : ''}`)
+      if (snippet) push(`User asked: ${snippet}${turn.content.length > 200 ? '…' : ''}`)
       continue
     }
     if (turn.role === 'assistant') {
       const snippet = turn.content.slice(0, 200).trim()
-      if (snippet) parts.push(`Assistant: ${snippet}${turn.content.length > 200 ? '…' : ''}`)
+      if (snippet) push(`Assistant: ${snippet}${turn.content.length > 200 ? '…' : ''}`)
       for (const call of turn.toolCalls ?? []) {
         const inputStr = typeof call.input === 'string' ? call.input.slice(0, 100) : JSON.stringify(call.input).slice(0, 100)
-        parts.push(`  Tool: ${call.toolName}(${inputStr})`)
+        push(`  Tool: ${call.toolName}(${inputStr})`)
       }
       continue
     }
     if (turn.role === 'tool') {
       for (const result of turn.toolResults ?? []) {
         const firstLine = result.output.split('\n')[0]?.slice(0, 150) ?? ''
-        parts.push(`  → ${result.toolName}: ${firstLine}${result.ok ? '' : ' (failed)'}${result.output.length > 150 ? '…' : ''}`)
+        push(`  → ${result.toolName}: ${firstLine}${result.ok ? '' : ' (failed)'}${result.output.length > 150 ? '…' : ''}`)
       }
     }
+  }
+  if (dropped > 0) {
+    parts.push(`[${dropped} older detail lines dropped from this summary — the recent turns below are verbatim.]`)
   }
 
   parts.push('[End of summary. The turns below are the recent, verbatim conversation.]')

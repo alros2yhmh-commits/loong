@@ -21,7 +21,14 @@ interface ShellSession {
   proc: IPty
   buffer: string
   exited: boolean
+  /** when the shell last produced output — silence is information */
+  lastOutputAt: number
 }
+
+/** a hung interactive program cannot hold a session forever: the shell is
+ *  force-killed after this, whatever it was doing. A run is bounded; a shell
+ *  outliving its run by ten minutes was a real leak. */
+const SESSION_MAX_MS = 600_000
 
 const sessions = new Map<string, ShellSession>()
 
@@ -66,16 +73,32 @@ function ensure(runId: string): ShellSession {
        per message; the shell tool (one-shot commands) is fully hidden. */
   })
 
-  const session: ShellSession = { proc, buffer: '', exited: false }
+  const session: ShellSession = { proc, buffer: '', exited: false, lastOutputAt: Date.now() }
   proc.onData((data) => {
     session.buffer += data
+    session.lastOutputAt = Date.now()
     if (session.buffer.length > MAX_BUFFER) session.buffer = session.buffer.slice(-MAX_BUFFER)
   })
   proc.onExit(() => {
     session.exited = true
   })
+  /* the hard cap: a program that waits for input nobody sends would keep the
+     pty (and its conhost) alive for the lifetime of the app. Unref'd: the cap
+     must never be the reason a process stays alive. */
+  const cap = setTimeout(() => {
+    try { proc.kill() } catch { /* already gone */ }
+  }, SESSION_MAX_MS)
+  cap.unref()
   sessions.set(runId, session)
   return session
+}
+
+/** silence, described: a quiet shell is either working or waiting for input,
+ *  and the model must be able to tell which it is looking at */
+function idleNote(session: ShellSession): string {
+  const secs = Math.round((Date.now() - session.lastOutputAt) / 1000)
+  if (secs < 5) return ''
+  return ` The shell has been silent for ${secs}s — it is either still running or waiting for input (use write to answer, kill to stop it).`
 }
 
 function drain(session: ShellSession): string {
@@ -162,10 +185,7 @@ export function createTerminalTool(runId: string, autoApprove = false) {
         session.proc.write(`${line}\r`)
         await sleep(wait)
         const out = drain(session)
-        return (
-          out ||
-          `(no output after ${wait}ms — the command may still be running. Use read, or write if it is waiting for input.)`
-        )
+        return out || `(no output after ${wait}ms.)${idleNote(session)}`
       }
 
       if (action === 'write') {
@@ -175,13 +195,13 @@ export function createTerminalTool(runId: string, autoApprove = false) {
         const session = ensure(runId)
         session.proc.write(data)
         await sleep(wait)
-        return drain(session) || '(no output)'
+        return drain(session) || `(no output)${idleNote(session)}`
       }
 
       /* read */
       const session = ensure(runId)
       await sleep(Math.min(wait, 800))
-      return drain(session) || '(nothing new)'
+      return drain(session) || `(nothing new)${idleNote(session)}`
     },
   })
 }
