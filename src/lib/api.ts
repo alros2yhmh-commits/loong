@@ -119,6 +119,8 @@ export interface RemoteModel {
   /** whether the model can emit tool calls — the router's hard floor */
   supportsTools: boolean
   /** the model accepts image parts; false means the composer should warn */
+  /** a reasoning model — slower, stronger; the router prefers it for deep work */
+  reasoning?: boolean
   vision?: boolean
 }
 
@@ -158,6 +160,23 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   health: () => json<Health>('/api/health'),
   models: () => json<{ models: LocalModel[]; error?: string }>('/api/models'),
+  /** every model of a provider, from the open catalog — vision, tools, price */
+  catalogModels: (provider: string) =>
+    json<{
+      provider: string
+      models: {
+        id: string
+        name: string
+        vision: boolean
+        tools: boolean
+        reasoning: boolean
+        context: number | null
+        priceIn: number | null
+        priceOut: number | null
+        family: string | null
+      }[]
+      error?: string
+    }>(`/api/catalog/models?provider=${encodeURIComponent(provider)}`),
   openrouterModels: (refresh = false) =>
     json<{ models: RemoteModel[]; free?: number; error?: string }>(
       `/api/openrouter/models${refresh ? '?refresh=1' : ''}`,
@@ -183,6 +202,9 @@ export const api = {
       }
     }>('/api/traces'),
   sessions: () => json<{ sessions: ServerSession[] }>('/api/sessions'),
+  /** copy a thread — its words, its run — under a new id */
+  forkSession: (id: string) =>
+    json<{ session: ServerSession }>(`/api/sessions/${encodeURIComponent(id)}/fork`, { method: 'POST' }),
   /** the run of a thread — tools, approvals, plans — not just the words */
   threadBlocks: (id: string) =>
     json<{ blocks: unknown[] | null }>(`/api/threads/${encodeURIComponent(id)}/blocks`),

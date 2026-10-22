@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { AgentPhase, ApprovalDecision } from '../lib/contract'
 import type { Block } from '../lib/blocks'
 import { BlockView } from './Message'
@@ -150,13 +150,43 @@ export function Thread({
     if (el) el.scrollTop = el.scrollHeight
   }, [])
 
-  /* follow while at the tail — on new blocks, on a phase change, and the moment
-     the reader comes back to the tail on their own */
+  /* when the READER moved, not the content. A stream appends a block every few
+     dozen milliseconds, and each append moves the scroll position: without this
+     the onScroll handler cannot tell "they scrolled up to read" from "the
+     content grew", and it used to flip follow back on mid-read and throw the
+     reader to the bottom. The window is generous on purpose — a flick of the
+     wheel is one event, a stream is a hundred. */
+  const readerMovedAt = useRef(0)
   useEffect(() => {
-    if (!follow) return
-    const r = requestAnimationFrame(scrollToBottom)
-    return () => cancelAnimationFrame(r)
-  }, [blocks, phase, follow, scrollToBottom])
+    const mark = () => {
+      readerMovedAt.current = Date.now()
+    }
+    window.addEventListener('wheel', mark, { passive: true })
+    window.addEventListener('touchstart', mark, { passive: true })
+    window.addEventListener('keydown', mark, { passive: true })
+    return () => {
+      window.removeEventListener('wheel', mark)
+      window.removeEventListener('touchstart', mark)
+      window.removeEventListener('keydown', mark)
+    }
+  }, [])
+
+  /* the height before this render's blocks landed, so the reader can be put
+     back exactly where they were — same distance from the bottom, not the same
+     pixel (a thread grows downwards) */
+  const heightBefore = useRef(0)
+  useLayoutEffect(() => {
+    const el = scroller.current
+    if (!el) return
+    const grew = el.scrollHeight - heightBefore.current
+    heightBefore.current = el.scrollHeight
+    if (follow) {
+      el.scrollTop = el.scrollHeight
+    } else if (grew > 0) {
+      /* anchor: the new content pushes down, the reader stays put */
+      el.scrollTop += grew
+    }
+  }, [blocks, follow, phase])
 
   /* a sent message (or a run starting) always snaps to the tail — the reader
      just asked for something; following is the default they expect */
@@ -168,6 +198,9 @@ export function Thread({
   const onScroll = () => {
     const el = scroller.current
     if (!el) return
+    /* only the reader's own scroll decides. Content that moved under a still
+       cursor is not a decision to stop following. */
+    if (Date.now() - readerMovedAt.current > 250) return
     setFollow(el.scrollHeight - el.scrollTop - el.clientHeight < 90)
   }
 

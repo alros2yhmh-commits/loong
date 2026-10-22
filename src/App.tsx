@@ -157,8 +157,8 @@ const [workspace, setWorkspace] = useState<string | null>(null)
     [models, remoteModels],
   )
   const pickForSend = useCallback(
-    (text: string) =>
-      pickModel(settings.route, text, routerModels.local, routerModels.remote),
+    (text: string, images = 0) =>
+      pickModel(settings.route, text, routerModels.local, routerModels.remote, images),
     [settings.route, routerModels],
   )
 
@@ -475,6 +475,18 @@ const [workspace, setWorkspace] = useState<string | null>(null)
   /* a new project is one act: pick the folder, move the agent to it, and open
      a session inside it. Picking a folder alone left the reader on an empty
      column in a project with no thread. */
+  /* copy a thread: the conversation, its messages and its run, under a new id */
+  const forkThread = useCallback(async (id: string) => {
+    try {
+      const { session } = await api.forkSession(id)
+      setSessions((prev) => [session, ...prev])
+      await openThread(session.id)
+      sound.play('select')
+    } catch {
+      /* a fork that fails leaves the original untouched */
+    }
+  }, [openThread])
+
   const newProject = useCallback(async () => {
     await changeWorkspace()
     await createThread()
@@ -1309,6 +1321,7 @@ const [workspace, setWorkspace] = useState<string | null>(null)
           }}
           onRename={renameThread}
           onDelete={(id) => setDeleteTarget(id)}
+          onFork={(id) => void forkThread(id)}
         />
 
 

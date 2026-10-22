@@ -188,8 +188,13 @@ export function getMessages(sessionId: string, limit = 500): MessageRow[] {
 export function autoTitle(sessionId: string, firstUserText: string): void {
   const row = getSession(sessionId)
   if (!row || row.title !== 'New thread') return
-  const clean = firstUserText.replace(/\s+/g, ' ').trim()
-  renameSession(sessionId, clean.slice(0, 60) || 'New thread')
+  /* the title is the request, not the pleasantry: a thread called "hi" is a
+     thread nobody can find again */
+  const clean = firstUserText
+    .replace(/\s+/g, ' ')
+    .replace(/^(hi|hello|hey|سلام|عسلامة|ازيك|صباح الخير|مساء الخير|اهلا|أهلا)[,!\s.!؟?]*/i, '')
+    .trim()
+  renameSession(sessionId, (clean || firstUserText).slice(0, 60))
 }
 
 export function closeDb(): void {

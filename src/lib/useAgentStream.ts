@@ -95,7 +95,8 @@ export interface UseAgentStreamOptions {
   /** confidence gate for full-trust writes — below the threshold they park */
   confidence?: { threshold: number; decisionModel?: string }
   /** the model for THIS message, from the router; null keeps the configured one */
-  pickModel?: (text: string) => string | null
+  /** the router: the text, and how many images it carries */
+  pickModel?: (text: string, images?: number) => string | null
   /** what the reader asked to be called — injected into the system prompt */
   userName?: string
   /** called with the finished reply, so the caller can refresh its thread list */
@@ -149,7 +150,7 @@ export function useAgentStream({
       if (!trimmed || current.running) return
       /* the router's answer for this message, resolved once at send time — the
          run stays on the model it started on, even if the reader switches */
-      const routed = pickModel?.(trimmed) ?? null
+      const routed = pickModel?.(trimmed, images.length) ?? null
       /* the config carries the provider and the key; without it there is no
          run to make — the router can choose a model, not a provider */
       if (!config || (!routed && !config.model)) {

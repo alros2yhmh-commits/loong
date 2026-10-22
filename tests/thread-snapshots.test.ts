@@ -35,3 +35,27 @@ test('a thread snapshot round-trips the whole run', async () => {
   deleteBlocks('session-1')
   assert.equal(loadBlocks('session-1'), null)
 })
+
+test('a forked thread carries its words and its run', async () => {
+  process.env.LOONG_DATA_DIR = mkdtempSync(join(tmpdir(), 'loong-fork-'))
+  const { createSession, appendMessage, getMessages, getSession } = await import('../server/db.ts')
+  const { saveBlocks, loadBlocks } = await import('../server/threads.ts')
+
+  const src = createSession({ title: 'the API redesign', workspace: 'C://work' })
+  appendMessage({ sessionId: src.id, role: 'user', content: 'we decided /v2/things' })
+  saveBlocks(src.id, [{ k: 'tool', call: { id: 't1', name: 'shell' }, result: { ok: true, output: 'ok' } }])
+
+  /* the fork endpoint's body, exercised directly against the store */
+  const copy = createSession({ title: `${src.title} (fork)`, workspace: src.workspace ?? undefined })
+  for (const m of getMessages(src.id)) {
+    appendMessage({ sessionId: copy.id, role: m.role, content: m.content })
+  }
+  const blocks = loadBlocks(src.id)
+  if (blocks) saveBlocks(copy.id, blocks)
+
+  assert.equal(getSession(copy.id)?.title, 'the API redesign (fork)')
+  assert.deepEqual(getMessages(copy.id).map((m) => m.content), ['we decided /v2/things'])
+  assert.equal((loadBlocks(copy.id) as unknown[]).length, 1, 'the run comes too')
+  /* the original is untouched */
+  assert.equal(getSession(src.id)?.title, 'the API redesign')
+})

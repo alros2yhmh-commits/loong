@@ -38,6 +38,8 @@ import {
   renameSession,
 } from './db.ts'
 import { loadBlocks, saveBlocks, deleteBlocks } from './threads.ts'
+import { loadCatalog, modelsOf } from './catalog.ts'
+import type { ProviderId } from './providers.ts'
 import { pendingApprovals, resolveApproval, pendingQuestions, resolveQuestion } from './approvals.ts'
 
 /* ---------------------------------------------------------------------------
@@ -231,6 +233,21 @@ app.get('/api/models', async (c) => {
   }
 })
 
+/* ---- the model catalog: every provider's models, with what they can do --- */
+
+app.get('/api/catalog/models', async (c) => {
+  const provider = (c.req.query('provider') ?? 'openrouter') as ProviderId
+  try {
+    const catalog = await loadCatalog()
+    const models = modelsOf(catalog, provider).filter((m) => m.tools)
+    return c.json({ provider, models, count: models.length })
+  } catch (e) {
+    /* an offline machine keeps the manual field: the list is a convenience,
+       never a requirement */
+    return c.json({ provider, models: [], error: (e as Error).message })
+  }
+})
+
 app.get('/api/openrouter/models', async (c) => {
   try {
     const force = c.req.query('refresh') === '1'
@@ -257,6 +274,27 @@ app.delete('/api/sessions/:id', (c) => {
 })
 
 /* ---- thread snapshots: the run itself, not just the conversation --------- */
+
+/* fork a thread: the conversation, its messages and its run, under a new id.
+   OpenCode settled this — a thread you want to try a different approach on is
+   a COPY, never an edit of the original. */
+app.post('/api/sessions/:id/fork', (c) => {
+  const id = c.req.param('id')
+  const src = getSession(id)
+  if (!src) return c.json({ error: 'no such session' }, 404)
+  const copy = createSession({
+    title: `${src.title} (fork)`.slice(0, 80),
+    provider: src.provider ?? undefined,
+    model: src.model ?? undefined,
+    workspace: src.workspace ?? undefined,
+  })
+  for (const m of getMessages(id)) {
+    appendMessage({ sessionId: copy.id, role: m.role, content: m.content })
+  }
+  const blocks = loadBlocks(id)
+  if (blocks) saveBlocks(copy.id, blocks)
+  return c.json({ session: copy }, 201)
+})
 
 app.get('/api/threads/:id/blocks', (c) => {
   const id = c.req.param('id')

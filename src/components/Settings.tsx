@@ -48,6 +48,29 @@ export function Settings({
   /* a search box over the (long) OpenRouter catalogue so a model can be found
      without scrolling a hundred-row dropdown */
   const [modelQuery, setModelQuery] = useState('')
+  /* the open catalog: pick a provider, and its models appear — with what they
+     can do (images, tools, reasoning) and what they cost. No typing. */
+  const [catalog, setCatalog] = useState<Awaited<ReturnType<typeof api.catalogModels>>['models']>([])
+  const [catalogError, setCatalogError] = useState<string | null>(null)
+  useEffect(() => {
+    if (settings.provider === 'ollama' || settings.provider === 'custom') return
+    let alive = true
+    setCatalog([])
+    setCatalogError(null)
+    void api
+      .catalogModels(settings.provider)
+      .then((r) => {
+        if (!alive) return
+        setCatalog(r.models ?? [])
+        setCatalogError(r.error ?? null)
+      })
+      .catch(() => {
+        if (alive) setCatalogError('the catalog could not be reached')
+      })
+    return () => {
+      alive = false
+    }
+  }, [settings.provider])
 
   useEffect(() => {
     if (!open) return
@@ -257,6 +280,60 @@ export function Settings({
                         </option>
                       ))}
                     </select>
+                  ) : settings.provider !== 'ollama' && catalog.length > 0 ? (
+                    /* any provider, discovered — the same list the router reads */
+                    <div className="flex w-full flex-col gap-[6px]">
+                      <div className="flex items-center gap-[8px]">
+                        <input
+                          value={modelQuery}
+                          onChange={(e) => setModelQuery(e.target.value)}
+                          placeholder="filter models…"
+                          className="mono min-w-0 flex-1 bg-transparent text-[11.5px] outline-none"
+                          style={{ color: 'var(--text-1)' }}
+                        />
+                        <span className="mono shrink-0 text-[10px]" style={{ color: 'var(--text-4)' }}>
+                          {catalog.length} models
+                        </span>
+                      </div>
+                      <div
+                        className="max-h-[220px] w-full overflow-y-auto rounded-[6px]"
+                        style={{ border: '1px solid var(--line-2)' }}
+                      >
+                        {catalog
+                          .filter((m) => m.id.toLowerCase().includes(modelQuery.toLowerCase().trim()))
+                          .map((m) => (
+                            <button
+                              key={m.id}
+                              type="button"
+                              onClick={() => {
+                                set('model', m.id)
+                                set('route', 'manual')
+                              }}
+                              className="mono flex w-full items-center gap-[7px] px-[9px] py-[5px] text-left text-[11.5px]"
+                              style={{
+                                background: settings.model === m.id ? 'var(--surface)' : 'transparent',
+                                color: settings.model === m.id ? 'var(--text-1)' : 'var(--text-3)',
+                              }}
+                            >
+                              <span className="min-w-0 flex-1 truncate" title={m.name}>{m.id}</span>
+                              {m.vision && (
+                                <span title="reads images" style={{ color: 'var(--text-4)' }}>img</span>
+                              )}
+                              {m.reasoning && (
+                                <span title="reasoning — stronger, slower" style={{ color: 'var(--text-4)' }}>think</span>
+                              )}
+                              {m.context && (
+                                <span style={{ color: 'var(--text-4)' }}>{Math.round(m.context / 1000)}k</span>
+                              )}
+                            </button>
+                          ))}
+                      </div>
+                      {catalogError && (
+                        <p className="m-0 text-[11px]" style={{ color: 'var(--text-4)' }}>
+                          {catalogError} — type the model id below instead.
+                        </p>
+                      )}
+                    </div>
                   ) : settings.provider === 'openrouter' && remoteModels.length > 0 ? (
                     <>
                       <div className="flex w-full flex-col gap-[6px]">

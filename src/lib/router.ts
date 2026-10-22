@@ -31,6 +31,11 @@ const CODE_PATTERN = /```|function |class |import |def |SELECT |\.tsx?\b|\.py\b/
 export interface Routable {
   name: string
   supportsTools: boolean
+  /** the model reads images — a message with a picture cannot go anywhere else */
+  vision?: boolean
+  /** a reasoning model: slower and stronger. The router prefers it for deep
+      work and avoids it for fast work, for exactly those two reasons. */
+  reasoning?: boolean
   free?: boolean
   /** bigger context is a reasonable proxy for a stronger model */
   contextLength?: number
@@ -57,12 +62,16 @@ export function isDeepMessage(text: string): boolean {
   return DEEP_PATTERN.test(text)
 }
 
-/** the tool-calling floor, applied before any preference */
-function capable(local: Routable[], remote: Routable[]): { local: Routable[]; remote: Routable[] } {
-  return {
-    local: local.filter((m) => m.supportsTools && !m.weak),
-    remote: remote.filter((m) => m.supportsTools && !m.weak),
-  }
+/** the floor, applied before any preference: tool calling always, and vision
+ *  when the message carries a picture. A router that ignores either sends the
+ *  run to a model that cannot do the job — and the failure is silent. */
+function capable(
+  local: Routable[],
+  remote: Routable[],
+  needsVision = false,
+): { local: Routable[]; remote: Routable[] } {
+  const ok = (m: Routable) => m.supportsTools && !m.weak && (!needsVision || m.vision === true)
+  return { local: local.filter(ok), remote: remote.filter(ok) }
 }
 
 /** free models known to actually run through the chat/completions path —
@@ -75,24 +84,28 @@ const PREFERRED_FREE = [
 ]
 
 /** pick the quickest tool-capable model, or null when there is none */
-export function pickFast(local: Routable[], remote: Routable[]): string | null {
-  const { local: l, remote: r } = capable(local, remote)
+export function pickFast(local: Routable[], remote: Routable[], needsVision = false): string | null {
+  const { local: l, remote: r } = capable(local, remote, needsVision)
+  /* speed means no thinking pause: a reasoning model is the wrong tool for
+     "rename this" even when it is the best tool for "why is this slow" */
+  const quick = r.filter((m) => m.reasoning !== true)
   if (l.length > 0) return l[0].name
   /* prefer a free model that is known to work — the raw catalogue order can
      lead with a harness-gated entry that fails on the first token */
-  const preferred = PREFERRED_FREE.map((id) => r.find((m) => m.name === id)).find(
+  const preferred = PREFERRED_FREE.map((id) => quick.find((m) => m.name === id)).find(
     (m): m is Routable => Boolean(m),
   )
-  const free = r.find((m) => m.free)
-  return (preferred ?? free ?? r[0])?.name ?? null
+  const free = quick.find((m) => m.free)
+  return (preferred ?? free ?? quick[0] ?? r[0])?.name ?? null
 }
 
 /** pick the strongest tool-capable model, or null when there is none */
-export function pickDeep(local: Routable[], remote: Routable[]): string | null {
-  const { local: l, remote: r } = capable(local, remote)
-  /* the frontier is paid and wide: rank by (not free, then context) — the
-     catalogue arrives free-first, so its order is not a strength order */
+export function pickDeep(local: Routable[], remote: Routable[], needsVision = false): string | null {
+  const { local: l, remote: r } = capable(local, remote, needsVision)
+  /* the frontier is paid and wide: rank by (reasoning, not free, context) —
+     the catalogue arrives free-first, so its order is not a strength order */
   const ranked = [...r].sort((a, b) => {
+    if (Boolean(a.reasoning) !== Boolean(b.reasoning)) return a.reasoning ? -1 : 1
     if (Boolean(a.free) !== Boolean(b.free)) return a.free ? 1 : -1
     return (b.contextLength ?? 0) - (a.contextLength ?? 0)
   })
@@ -110,11 +123,15 @@ export function pickModel(
   message: string,
   local: Routable[],
   remote: Routable[],
+  /** how many images the message carries — a picture is a hard requirement,
+      not a preference */
+  images = 0,
 ): string | null {
   if (route === 'manual') return null
-  if (route === 'fast') return pickFast(local, remote)
-  if (route === 'deep') return pickDeep(local, remote)
-  return isDeepMessage(message) ? pickDeep(local, remote) : pickFast(local, remote)
+  const needsVision = images > 0
+  if (route === 'fast') return pickFast(local, remote, needsVision)
+  if (route === 'deep') return pickDeep(local, remote, needsVision)
+  return isDeepMessage(message) ? pickDeep(local, remote, needsVision) : pickFast(local, remote, needsVision)
 }
 
 /** the models the router may choose from, from the two lists the app already holds */
@@ -133,6 +150,8 @@ export function routableFrom(
       supportsTools: m.supportsTools,
       free: m.free,
       contextLength: m.contextLength,
+      vision: m.vision,
+      reasoning: m.reasoning,
       weak: isWeakModel(m.id, m.contextLength),
     })),
   }

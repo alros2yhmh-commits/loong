@@ -105,3 +105,29 @@ test('a restored thread cannot carry a block that breaks the render', async () =
   assert.equal(kept[0].k, 'user')
   assert.equal(kept[1].k, 'tool')
 })
+
+test('a fault retrying cannot fix ends the run with its reason', async () => {
+  const { isDefinitive, friendlyError, isRetryable } = await import('../server/agent.ts')
+  /* a wall the server already said no to */
+  for (const msg of [
+    'The provider account is out of credit for this model.',
+    'HTTP 402 payment required',
+    'invalid api key',
+    'models/gemini-2.5-flash is no longer available to new users',
+    'no endpoints found for this model',
+    'context length exceeded',
+  ]) {
+    assert.ok(isDefinitive(msg), `should be definitive: ${msg}`)
+    assert.ok(!isRetryable(msg) || isDefinitive(msg), `definitive wins over retryable: ${msg}`)
+  }
+  /* a busy provider is a fault of the moment */
+  for (const msg of ['429 rate limited', 'overloaded', 'ECONNRESET', 'socket hang up']) {
+    assert.ok(!isDefinitive(msg), `should be transient: ${msg}`)
+    assert.ok(isRetryable(msg), `should be retryable: ${msg}`)
+  }
+  /* the reason a reader can act on */
+  assert.match(friendlyError('out of credit'), /out of credit/i)
+  assert.match(friendlyError('invalid api key'), /key/i)
+  assert.match(friendlyError('no endpoints found'), /not available|another model/i)
+  assert.match(friendlyError('429 rate limited'), /rate-limiting/i)
+})

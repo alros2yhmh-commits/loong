@@ -169,10 +169,14 @@ const MAX_STEPS = (() => {
    seconds, and giving up after 6.5s is what made a healthy run look dead */
 /** attempts across the whole chain: a model gets RETRIES_PER_MODEL of them for a
     transient fault, and the chain has room for several models after that */
+/* attempts across the chain: two per model at most */
 const MAX_ATTEMPTS = 8
 /** how many times ONE model is retried before the chain moves on */
 const RETRIES_PER_MODEL = 2
-const RETRY_BACKOFF_MS = [900, 2200, 5500, 9000]
+/* the waits between attempts. A provider that is busy stays busy for seconds,
+   not milliseconds — the old ladder (900ms, 2.2s…) was a burst, and on a slow
+   provider it read as the app hammering the API. */
+const RETRY_BACKOFF_MS = [3000, 8000]
 /* the post-run check runs the project's own build/test — a cold gradle build
    is minutes, not seconds, and a check killed at 60s is a lie either way */
 const CHECK_TIMEOUT_MS = 180_000
@@ -604,6 +608,41 @@ export function isRetryable(message: string): boolean {
   return /429|rate.?limit|too many requests|temporarily|overloaded|unavailable|upstream|50[0-4]\b|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|fetch failed|socket hang up|network|timed? ?out/i.test(
     message,
   )
+}
+
+/** A fault that retrying cannot fix — the answer will be identical.
+ *
+ *  The distinction is the whole difference between a run that waits out a busy
+ *  provider and a run that fires sixteen requests at a dead one. A credit
+ *  wall, a wrong key, a model that does not exist, a malformed request: the
+ *  server has already said no, and saying it again is noise the user pays for
+ *  in latency. */
+export function isDefinitive(message: string): boolean {
+  return /out of credit|insufficient|402|billing|quota|401|403|invalid.{0,12}api.{0,12}key|unauthor|permission|api.?key.{0,24}(invalid|missing|not found)|model.{0,40}(not found|does not exist|no longer|unavailable|not offered|not available)|no endpoints|not a valid model|invalid.{0,12}model|400 bad request|context.{0,12}length|too long|unsupported|capability/i.test(
+    message,
+  )
+}
+
+/** the same fault, in words a reader can act on */
+export function friendlyError(raw: string): string {
+  const m = raw.toLowerCase()
+  if (/out of credit|insufficient|402|billing|quota/.test(m))
+    return 'The provider account is out of credit for this model. Add credit, or pick another model in Settings.'
+  if (/401|403|invalid.{0,12}api.{0,12}key|unauthor|api.?key/.test(m))
+    return 'The API key was refused. Check it in Settings (the key is held by the local agent, never the browser).'
+  if (/model.{0,24}(not found|does not exist|unavailable to)|no endpoints|not a valid model|invalid.{0,12}model/.test(m))
+    return 'This model is not available on the provider (renamed, removed, or not offered to this account). Pick another in Settings.'
+  if (/context.{0,12}length|too long/.test(m))
+    return 'The conversation is longer than this model\'s context window. Start a new thread, or pick a model with a bigger window.'
+  if (/unsupported|capability/.test(m))
+    return 'This model cannot do what the run needs (for example images, or tool calling). Pick another in Settings.'
+  if (/429|rate.?limit|too many requests/.test(m))
+    return 'The provider is rate-limiting this model right now. Loong retried, and this was the last attempt — try again in a moment, or pick another model.'
+  if (/overloaded|unavailable|upstream|50[0-4]/.test(m))
+    return 'The provider is busy or down. Loong retried, and this was the last attempt.'
+  if (/network|fetch failed|socket hang up|ECONN|timed? ?out/.test(m))
+    return 'The connection to the provider failed. Loong retried, and this was the last attempt.'
+  return raw
 }
 
 /** the exact text shown when a provider answers but says nothing */
@@ -1244,8 +1283,9 @@ export async function runAgent(opts: RunOptions): Promise<void> {
           maxOutputTokens: outputCap,
           /* the attempt loop already retries with backoff + a model switch, so
              the SDK should not also retry on its own — a credit/quota error
-             must surface fast, not burn three silent calls */
-          maxRetries: 1,
+             must surface fast, not burn three silent calls. Zero: two retry
+             policies in one call is how a slow provider turns into a storm. */
+          maxRetries: 0,
           /* prompt caching where the provider bills for context, extended
              thinking where it exists — both are free when they are ignored */
           providerOptions: callProviderOptions(activeConfig) as unknown as Parameters<
@@ -1575,15 +1615,26 @@ export async function runAgent(opts: RunOptions): Promise<void> {
   try {
     const backoff = opts.retryBackoffMs ?? RETRY_BACKOFF_MS
 
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    /* a hand-picked model gets two attempts, not eight: the chain cannot
+       offer an alternative, so the extra attempts only delay the answer */
+    const attemptBudget = modelChain.length === 1 ? RETRIES_PER_MODEL : MAX_ATTEMPTS
+    for (let attempt = 1; attempt <= attemptBudget; attempt++) {
       lastModel = modelChain[modelIdx]
       const result = await runOnce(attempt)
       if (result.ok) return
 
       /* the payload was corrected (images dropped): retry at once, no backoff */
-      if (result.retryNow && attempt < MAX_ATTEMPTS) continue
+      if (result.retryNow && attempt < attemptBudget) continue
 
       if (opts.abortSignal?.aborted) return
+
+      /* a fault retrying cannot fix — no credit, a refused key, a model that
+         does not exist — ends the run HERE, with the reason. Hammering a wall
+         the server already said no to is how a slow provider becomes a storm. */
+      if (isDefinitive(result.error ?? '')) {
+        fatal = friendlyError(result.error ?? 'The run failed.')
+        break
+      }
 
       const canRetry =
         (result.empty || isRetryable(result.error ?? '')) && attempt < MAX_ATTEMPTS
@@ -1913,29 +1964,5 @@ export function causeOf(error: string | null): RunCause {
 }
 
 /** provider errors are long and full of URLs; say the useful part first */
-export function friendlyError(message: string): string {
-  if (/ECONNREFUSED|fetch failed/i.test(message)) {
-    return `Could not reach the model. If this is a local model, check that Ollama is running. (${message})`
-  }
-  if (/401|invalid_api_key|unauthor|no auth/i.test(message)) {
-    return `The provider rejected the API key. Check it in Settings. (${message})`
-  }
-  if (/402|insufficient|credit|quota|billing/i.test(message)) {
-    return `The provider account is out of credit for this model. Pick a model ending in ":free", or top up. (${message})`
-  }
-  if (/429|rate.?limit|too many requests/i.test(message)) {
-    return `Rate-limited. Free models share one small quota across everyone, so this is expected under load — wait a few seconds, or pick another model in Settings. (${message})`
-  }
-  if (/404|model.*not found|no such model|does not exist/i.test(message)) {
-    return `The provider does not know that model name. Pick one in Settings. (${message})`
-  }
-  if (/agentic harness|chat\/completions endpoint|bidirectional streaming|live.?extended[-:]thinking|:batch|-batch/i.test(message)) {
-    return `That model can't run through Loong — it needs a whitelisted harness, the batch endpoint, or the Gemini Live WebSocket API. Pick a standard chat model in Settings. (${message.slice(0, 90)})`
-  }
-  if (/temporarily|overloaded|unavailable|upstream/i.test(message)) {
-    return `The provider that serves this model is overloaded right now. This is upstream of Loong — another model will work. (${message})`
-  }
-  return message
-}
 
 export { displayPath }

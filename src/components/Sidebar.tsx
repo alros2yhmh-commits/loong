@@ -35,6 +35,7 @@ export function Sidebar({
   onSelect,
   onRename,
   onDelete,
+  onFork,
 }: {
   sessions: Session[]
   activeId: string | null
@@ -52,6 +53,8 @@ export function Sidebar({
   onSelect: (s: Session) => void
   onRename: (id: string, title: string) => void
   onDelete: (id: string) => void
+  /** copy a thread — its words and its run — under a new id */
+  onFork: (id: string) => void
 }) {
   const [query, setQuery] = useState('')
   /* projects fold. A workspace with forty threads is a wall otherwise. */
@@ -247,6 +250,7 @@ export function Sidebar({
                 onSelect={onSelect}
                 onRename={onRename}
                 onDelete={onDelete}
+                onFork={onFork}
               />
             ))}
           </div>

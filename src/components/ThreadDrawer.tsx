@@ -158,6 +158,7 @@ export function Row({
   onSelect,
   onRename,
   onDelete,
+  onFork,
 }: {
   session: Session
   active: boolean
@@ -166,6 +167,8 @@ export function Row({
   onSelect: (s: Session) => void
   onRename: (id: string, title: string) => void
   onDelete: (id: string) => void
+  /** copy a thread — its words and its run — under a new id */
+  onFork: (id: string) => void
 }) {
   const [hover, setHover] = useState(false)
   const [editing, setEditing] = useState(false)
@@ -306,6 +309,25 @@ export function Row({
                   aria-label="Rename this thread"
                 >
                   <IconPencil size={10} />
+                </button>
+                <button
+                  type="button"
+                  className="ctl grid h-[19px] w-[19px] place-items-center rounded-[4px]"
+                  style={{
+                    color: 'var(--text-2)',
+                    background: 'var(--surface)',
+                    border: '1px solid var(--line-2)',
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onFork(session.id)
+                  }}
+                  title="Fork this thread — a copy to try another approach on"
+                  aria-label="Fork this thread"
+                >
+                  <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="M4 3v6a3 3 0 003 3h1M4 3l2.2-1.6M4 3l2.2 1.6M12 8v5M12 8l2.2-1.6M12 8L9.8 6.4" />
+                  </svg>
                 </button>
                 <button
                   type="button"
