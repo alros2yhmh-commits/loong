@@ -86,3 +86,22 @@ test('a hand-picked paid model is never overruled by the free fallback chain', a
   assert.equal(mayFallBackFor('cohere/north-mini-code:free', 'openrouter'), true)
   assert.equal(mayFallBackFor('qwen3:8b', 'ollama'), true)
 })
+
+test('a restored thread cannot carry a block that breaks the render', async () => {
+  /* a snapshot is untrusted JSON: written by an older build, truncated by a
+     crash, or hand-edited. One malformed block used to take the app down. */
+  const { saneBlocks } = await import('../src/lib/blocks.ts')
+  const raw = [
+    { k: 'user', id: 'u1', text: 'hello' },
+    { k: 'tool' },                                    // no call — would throw
+    { k: 'text', id: 7, text: 'not a string id' },     // wrong shape
+    { k: 'mystery', id: 'x' },                        // unknown kind
+    null,
+    'not even an object',
+    { k: 'tool', call: { id: 't1', name: 'shell' }, result: { ok: true, output: 'ok' } },
+  ]
+  const kept = saneBlocks(raw)
+  assert.equal(kept.length, 2)
+  assert.equal(kept[0].k, 'user')
+  assert.equal(kept[1].k, 'tool')
+})

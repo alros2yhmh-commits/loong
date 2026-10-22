@@ -4,6 +4,7 @@ import {
   answerQuestion as answerQuestionBlock,
   blocksFromHistory,
   blocksToHistory,
+  saneBlocks,
   decideApproval,
   phaseOf,
   reduce,
@@ -305,7 +306,7 @@ export function useAgentStream({
       const current = runsRef.current[target]
       /* a live column is newer than storage — never overwrite a run in flight */
       if (current?.running) return
-      patch(target, () => ({ ...emptyRun(), blocks }))
+      patch(target, () => ({ ...emptyRun(), blocks: saneBlocks(blocks) }))
     },
     [sessionId, patch],
   )

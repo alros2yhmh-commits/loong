@@ -5,6 +5,7 @@ import { CommandPalette, type Command } from './components/CommandPalette'
 import { ArtifactsPanel, countArtifacts } from './components/ArtifactsPanel'
 import { Noise } from './components/Noise'
 import { Sidebar } from './components/Sidebar'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { Resizer } from './components/Resizer'
 import { RunBar } from './components/RunBar'
 import { RunStatus } from './components/RunStatus'
@@ -243,6 +244,7 @@ export default function App() {
   /* the recovery path for a thread that no longer exists — held in a ref so
      openThread can reach it without depending on itself */
   const recoverThread = useRef<((skipId: string) => Promise<void>) | null>(null)
+  const recoveringRef = useRef(false)
 
   const openThread = useCallback(async (id: string) => {
     setSplitFocus('primary')
@@ -331,9 +333,17 @@ export default function App() {
   /* the recovery, wired once both halves exist: a thread that was deleted
      under us falls back to the newest that still lives, or a fresh one */
   recoverThread.current = async (skipId: string) => {
-    const alive = sessions.filter((s) => s.id !== skipId)
-    if (alive.length > 0) await openThread(alive[0].id)
-    else await createThread()
+    /* one recovery at a time: two failing threads must not send the app
+       bouncing between them */
+    if (recoveringRef.current) return
+    recoveringRef.current = true
+    try {
+      const alive = sessions.filter((s) => s.id !== skipId)
+      if (alive.length > 0) await openThread(alive[0].id)
+      else await createThread()
+    } finally {
+      recoveringRef.current = false
+    }
   }
 
   /**
@@ -454,7 +464,15 @@ export default function App() {
 
   /* ---- first paint ------------------------------------------------------ */
 
+  /* the boot effect runs ONCE. Its callbacks now depend on the workspace (a
+     thread from another folder moves the agent), and a workspace change
+     re-creating openThread would re-run the boot — opening the newest thread,
+     moving the workspace, opening it again: a loop that looks like a crash. */
+  const bootedRef = useRef(false)
+
   useEffect(() => {
+    if (bootedRef.current) return
+    bootedRef.current = true
     let alive = true
     const probe = async () => {
       try {
@@ -1171,7 +1189,27 @@ export default function App() {
             </button>
           </div>
         )}
-        <Thread
+        <ErrorBoundary
+          fallback={(reset: () => void) => (
+            <div className="flex h-full flex-col items-center justify-center gap-[10px] px-[24px]">
+              <p className="m-0 text-[13px]" style={{ color: 'var(--text-2)' }}>
+                This conversation could not be drawn.
+              </p>
+              <button
+                type="button"
+                className="ctl rounded-[6px] px-[10px] py-[5px] text-[12px]"
+                style={{ border: '1px solid var(--line-3)', color: 'var(--text-1)' }}
+                onClick={() => {
+                  reset()
+                  void createThread()
+                }}
+              >
+                Start a fresh thread
+              </button>
+            </div>
+          )}
+        >
+          <Thread
           blocks={s.blocks}
           phase={s.phase}
           running={s.running}
@@ -1192,6 +1230,7 @@ export default function App() {
           canRewindRun={checkpoints.length > 0}
           zen={zen}
         />
+        </ErrorBoundary>
       </div>
     )
   }

@@ -12,7 +12,10 @@ interface State {
   error: Error | null
 }
 
-export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
+export class ErrorBoundary extends Component<
+  { children: ReactNode; fallback?: (reset: () => void) => ReactNode },
+  State
+> {
   state: State = { error: null }
 
   static getDerivedStateFromError(error: Error): State {
@@ -29,6 +32,8 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
 
   render(): ReactNode {
     if (!this.state.error) return this.props.children
+    const reset = () => this.setState({ error: null })
+    if (this.props.fallback) return this.props.fallback(reset)
     return (
       <div
         className="flex h-full w-full flex-col items-center justify-center gap-[12px] px-[24px]"

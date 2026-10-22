@@ -356,3 +356,51 @@ export function blocksFromHistory(
   }
   return out
 }
+
+/* ---------------------------------------------------------------------------
+   A block, verified.
+
+   A snapshot is JSON that was written by an older build, or truncated by a
+   crash, or hand-edited. Restoring it verbatim is how one malformed block
+   takes the whole thread down — and with it the app. The render never sees a
+   block that did not pass through here.
+   --------------------------------------------------------------------------- */
+
+export function isSaneBlock(b: unknown): b is Block {
+  if (!b || typeof b !== 'object') return false
+  const o = b as Record<string, unknown>
+  switch (o.k) {
+    case 'user':
+      return typeof o.id === 'string' && typeof o.text === 'string'
+    case 'thinking':
+    case 'text':
+      return typeof o.id === 'string' && typeof o.text === 'string'
+    case 'notice':
+      return typeof o.id === 'string' && typeof o.text === 'string'
+    case 'plan':
+      return typeof o.id === 'string' && !!o.plan && typeof o.plan === 'object'
+    case 'tool': {
+      const call = o.call as Record<string, unknown> | undefined
+      return !!call && typeof call.id === 'string' && typeof call.name === 'string'
+    }
+    case 'approval': {
+      const r = o.request as Record<string, unknown> | undefined
+      return !!r && typeof r.id === 'string' && typeof r.title === 'string'
+    }
+    case 'question': {
+      const r = o.request as Record<string, unknown> | undefined
+      return !!r && typeof r.id === 'string' && typeof r.question === 'string'
+    }
+    case 'audit':
+      return !!o.audit && typeof o.audit === 'object'
+    case 'subagent':
+      return typeof o.id === 'string' && typeof o.task === 'string'
+    default:
+      return false
+  }
+}
+
+/** keep only the blocks that can be rendered; a snapshot is untrusted input */
+export function saneBlocks(raw: unknown[]): Block[] {
+  return raw.filter(isSaneBlock)
+}
