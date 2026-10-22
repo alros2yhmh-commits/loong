@@ -3,8 +3,8 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "author": "Loong",
-  "description": "Loong — a desktop AI agent app. UI-first build against a frozen event contract.",
+  "author": "Hamza Mahmoud Ramadan",
+  "description": "Loong — a desktop coding agent. One brain, real tools, a UI built to be read.",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "concurrently -k -n vite,agent -c cyan,magenta \"vite\" \"node server/start.ts\"",

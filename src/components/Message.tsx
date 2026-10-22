@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import type { Block } from '../lib/blocks'
 import type { ApprovalDecision } from '../lib/contract'
 import { dur, easeOut, enterBlock } from '../motion/tokens'
@@ -122,7 +122,7 @@ interface BlockViewProps {
   onRewind?: (runId: string) => void
 }
 
-export function BlockView({ block, onDecide, onAnswer, rewindTargets, onRewind }: BlockViewProps) {
+export const BlockView = memo(function BlockView({ block, onDecide, onAnswer, rewindTargets, onRewind }: BlockViewProps) {
   switch (block.k) {
     case 'user':
       return (
@@ -359,4 +359,4 @@ export function BlockView({ block, onDecide, onAnswer, rewindTargets, onRewind }
         </motion.div>
       )
   }
-}
+})

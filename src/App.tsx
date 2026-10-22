@@ -1046,10 +1046,13 @@ export default function App() {
   )
 
   /* the model that RAN, not the one saved in settings — on auto/deep/fast
-     the router picks per run, and the old label could never be right there */
-  const activeModel = stream.usage?.model ?? settings.model
+     the router picks per run, and the old label could never be right there.
+     A route switch must also be visible IMMEDIATELY: while a route is active
+     the label says the route, never the last manual pick. */
+  const onRoute = settings.route !== 'manual'
+  const activeModel = onRoute ? stream.usage?.model ?? '' : settings.model
   const runtimeLabel = health
-    ? `${provider.label} · ${activeModel || 'no model'}`
+    ? `${provider.label} · ${onRoute ? `${settings.route} · ` : ''}${activeModel || (onRoute ? 'picks per run' : 'no model')}`
     : 'agent offline'
 
   /** the folder the agent is working in, shown under the thread title */

@@ -87,6 +87,13 @@ type Group =
   | { kind: 'block'; block: Block; index: number }
   | { kind: 'tools'; items: { block: Block; index: number }[] }
 
+/** a key that survives a slice shift: ids, not indices — an index key makes
+ *  every block remount (and replay its entrance) when the window moves. */
+function blockKey(b: Block, i: number): string {
+  if (b.k === 'tool') return b.call.id
+  return 'id' in b ? b.id : `${b.k}-${i}`
+}
+
 function groupBlocks(blocks: Block[]): Group[] {
   const out: Group[] = []
   let run: { block: Block; index: number }[] = []
@@ -248,11 +255,15 @@ export function Thread({
           if (group.kind === 'block') {
             return (
               <div
-                key={key}
+                key={blockKey(group.block, key)}
                 id={`blk-${start + group.index}`}
                 style={{
                   opacity: zen && key !== groups.length - 1 ? 0.22 : 1,
                   transition: 'opacity 160ms ease',
+                  /* off-screen blocks skip layout and paint: 250 blocks stop
+                     costing what 250 blocks cost */
+                  contentVisibility: 'auto',
+                  containIntrinsicSize: '120px',
                 }}
               >
                 <BlockView

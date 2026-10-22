@@ -1,28 +1,9 @@
 node_modules/
 dist/
 dist-agent/
-out/
-release*/
-recovered*/
-_trash/
-.vite/
-*.local
-*.log
-.DS_Store
-
-# build output. electron-builder writes an 88MB installer and an unpacked
-# tree here; both are products of the source, not source, and must never
-# enter history.
 app/
-win-unpacked/
-*.exe
-*.msi
-*.dmg
-*.AppImage
-
-# scratch. backups/ holds a copy of the pre-remediation tree and tmp/ holds
-# probe output — committing either would roughly double every line here.
-backups/
+*.log
 tmp/
-_verify_tmp/
-APPROVAL_PROBE.txt
+backups/
+shots/
+.DS_Store
