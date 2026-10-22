@@ -168,7 +168,7 @@ export function Sidebar({
           onClick={onNewProject}
           className="ctl flex items-center gap-[8px] rounded-[8px] px-[9px] py-[6px] text-left text-[12px]"
           style={{ color: 'var(--text-3)' }}
-          title="Open a folder as a project"
+          title="Pick a folder — it becomes a project, named after the folder"
         >
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
             <path
@@ -178,7 +178,7 @@ export function Sidebar({
               strokeLinejoin="round"
             />
           </svg>
-          Open project…
+          New project…
         </button>
         <button
           type="button"

@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { DATA_DIR } from './config.ts'
+import { DATA_DIR, getWorkspace } from './config.ts'
 
 /* ---------------------------------------------------------------------------
    Sessions, on a JSON file.
@@ -131,7 +131,9 @@ export function createSession(input: {
     updatedAt: now,
     provider: input.provider ?? null,
     model: input.model ?? null,
-    workspace: input.workspace ?? null,
+    /* the server knows which folder it is serving; a session is never
+       homeless when it can be told where it belongs */
+    workspace: input.workspace ?? getWorkspace(),
   }
   store.sessions.push(row)
   flush()

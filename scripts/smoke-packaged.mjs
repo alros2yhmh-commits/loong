@@ -115,6 +115,9 @@ const consoleErrors = []
 page.on('console', (m) => {
   if (m.type() === 'error') consoleErrors.push(m.text())
 })
+page.on('response', (r) => {
+  if (r.status() >= 400) consoleErrors.push(`${r.status()} ${r.url()}`)
+})
 page.on('pageerror', (e) => consoleErrors.push(`pageerror: ${e.message}`))
 
 /* the preload bridge is the token's only honest carrier — wait for it */

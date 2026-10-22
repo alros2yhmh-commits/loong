@@ -215,11 +215,55 @@ export default function App() {
   /* ---- opening a thread ------------------------------------------------- */
 
   /** show the thread's live column if it has one, otherwise load what was stored */
+  /** move the agent to a folder that is already known — no picker. Used when a
+      thread from another project is opened: the agent must stand where the
+      thread was written, or its next edit lands in the folder we just left. */
+  const moveToWorkspace = useCallback(async (path: string) => {
+    try {
+      const res = await api.setWorkspace(path)
+      setWorkspace(res.workspace)
+      /* the main process restarts the sidecar with the new root; wait for it */
+      for (let i = 0; i < 24; i++) {
+        try {
+          const h = await api.health()
+          if (h.workspace === path) {
+            setHealth(h)
+            break
+          }
+        } catch {
+          /* the sidecar is between processes */
+        }
+        await new Promise((r) => setTimeout(r, 250))
+      }
+    } catch (err) {
+      console.error('[loong] workspace move failed:', err)
+    }
+  }, [])
+
+  /* the recovery path for a thread that no longer exists — held in a ref so
+     openThread can reach it without depending on itself */
+  const recoverThread = useRef<((skipId: string) => Promise<void>) | null>(null)
+
   const openThread = useCallback(async (id: string) => {
     setSplitFocus('primary')
     setActiveId(id)
     setLoadingThread(true)
     try {
+      /* the list is already in hand: a thread that is not in it is gone (a
+         stale id, or deleted in another window). Recover before asking the
+         server for something we know is not there. */
+      if (sessions.length > 0 && !sessions.some((s) => s.id === id)) {
+        await recoverThread.current?.(id)
+        return
+      }
+      /* a thread belongs to a project. Opening one from another folder moves
+         the agent there first — standing in the old folder while showing the
+         other thread's work is how edits land in the wrong place. */
+      const target = sessions.find((s) => s.id === id)
+      const here = (workspace ?? '').toLowerCase()
+      if (target?.workspace && target.workspace.toLowerCase() !== here) {
+        await moveToWorkspace(target.workspace)
+      }
       /* the run comes back first — the tools, the approvals, the plan. Only
          when there is no snapshot does the thread fall back to the words. */
       const { blocks } = await api.threadBlocks(id)
@@ -239,11 +283,14 @@ export default function App() {
         return current
       })
     } catch {
-      /* an unreadable thread is left empty rather than wrong */
+      /* the thread is gone — deleted in another window, or a stale id from
+         before a cleanup. Come back to the newest thread that still exists
+         rather than sitting on a dead column asking a server that says no. */
+      await recoverThread.current?.(id)
     } finally {
       setLoadingThread(false)
     }
-  }, [])
+  }, [sessions, workspace, moveToWorkspace])
 
   /** open a thread into the right-hand pane and focus it — the second column */
   const openSplit = useCallback(async (id: string) => {
@@ -280,6 +327,14 @@ export default function App() {
       return null
     }
   }, [settings.provider, settings.model])
+
+  /* the recovery, wired once both halves exist: a thread that was deleted
+     under us falls back to the newest that still lives, or a fresh one */
+  recoverThread.current = async (skipId: string) => {
+    const alive = sessions.filter((s) => s.id !== skipId)
+    if (alive.length > 0) await openThread(alive[0].id)
+    else await createThread()
+  }
 
   /**
    * Delete a thread, for good.
