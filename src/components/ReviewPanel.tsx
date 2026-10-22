@@ -27,6 +27,25 @@ function Block({ title, text, clamp = false }: { title: string; text: string; cl
   )
 }
 
+/** the diff, as a heatmap: one bar per file, width and density by churn.
+ *  A stat line says "3 files changed"; this says WHICH one is the risk. */
+function changeHeat(diff: string): { path: string; add: number; del: number }[] {
+  const files: { path: string; add: number; del: number }[] = []
+  let cur: { path: string; add: number; del: number } | null = null
+  for (const line of diff.split('\n')) {
+    const m = /^diff --git a\/(.+?) b\//.exec(line)
+    if (m) {
+      cur = { path: m[1], add: 0, del: 0 }
+      files.push(cur)
+      continue
+    }
+    if (!cur) continue
+    if (line.startsWith('+') && !line.startsWith('+++')) cur.add += 1
+    if (line.startsWith('-') && !line.startsWith('---')) cur.del += 1
+  }
+  return files
+}
+
 export function ReviewPanel() {
   const [status, setStatus] = useState('')
   const [stat, setStat] = useState('')
@@ -80,6 +99,57 @@ export function ReviewPanel() {
 
       <Block title="Status" text={status.trim() || 'clean — nothing changed'} />
       {stat.trim() && <Block title="Diff stat" text={stat.trim()} />}
+      {(() => {
+        const heat = changeHeat(diff)
+        if (heat.length === 0) return null
+        const max = Math.max(...heat.map((f) => f.add + f.del), 1)
+        return (
+          <div>
+            <p
+              className="mono m-0 mb-[5px] text-[10px] tracking-[0.08em] uppercase"
+              style={{ color: 'var(--text-4)' }}
+            >
+              change heat
+            </p>
+            <div className="flex flex-col gap-[3px]">
+              {heat.slice(0, 12).map((f) => {
+                const total = f.add + f.del
+                const weight = total / max
+                return (
+                  <div key={f.path} className="flex items-center gap-[8px]">
+                    <span
+                      className="mono min-w-0 flex-1 truncate text-[10px]"
+                      style={{ color: 'var(--text-3)' }}
+                      title={f.path}
+                    >
+                      {f.path}
+                    </span>
+                    <div
+                      className="h-[4px] w-[110px] shrink-0 overflow-hidden rounded-[2px]"
+                      style={{ background: 'var(--line-1)' }}
+                    >
+                      <div
+                        className="h-full"
+                        style={{
+                          width: `${Math.max(6, Math.round(weight * 100))}%`,
+                          background: 'var(--text-2)',
+                          opacity: 0.35 + 0.65 * weight,
+                        }}
+                      />
+                    </div>
+                    <span
+                      className="mono w-[54px] shrink-0 text-right text-[9.5px]"
+                      style={{ color: 'var(--text-4)' }}
+                    >
+                      +{f.add} −{f.del}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })()}
       {diff.trim() && <Block title="Diff" text={diff} clamp />}
       <Block title="Recent commits" text={log.trim() || 'no commits yet'} />
     </div>

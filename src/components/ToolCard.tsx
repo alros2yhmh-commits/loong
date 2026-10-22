@@ -43,6 +43,9 @@ export function ToolCard({ call, result }: ToolCardProps) {
   return (
     <motion.div
       layout={reduced ? false : 'position'}
+      /* the same card keeps its identity when a group forms or collapses —
+         it moves, it does not dissolve and reappear */
+      layoutId={`tool-${call.id}`}
       transition={spring.settle}
       className="relative overflow-hidden rounded-[7px]"
       style={{

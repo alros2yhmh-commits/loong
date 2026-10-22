@@ -80,6 +80,8 @@ export function Composer({
   suggestions = [],
 }: ComposerProps) {
   const [value, setValue] = useState('')
+  /** a file dropped on the composer becomes part of the message, as text */
+  const [dropping, setDropping] = useState(false)
   const [focused, setFocused] = useState(false)
   const [images, setImages] = useState<string[]>([])
   const [mention, setMention] = useState<{ query: string; from: number } | null>(null)
@@ -245,7 +247,27 @@ export function Composer({
   const canSend = value.trim().length > 0
 
   return (
-    <div className="shrink-0 px-[24px] pt-[6px] pb-[12px]">
+    <div
+      className="shrink-0 px-[24px] pt-[6px] pb-[12px]"
+      onDragOver={(e) => {
+        e.preventDefault()
+        setDropping(true)
+      }}
+      onDragLeave={() => setDropping(false)}
+      onDrop={async (e) => {
+        e.preventDefault()
+        setDropping(false)
+        /* code is text: up to five files, 200 KB each, appended to the draft */
+        const files = Array.from(e.dataTransfer.files).slice(0, 5)
+        for (const file of files) {
+          if (file.size > 200_000) continue
+          const text = await file.text().catch(() => '')
+          if (!text) continue
+          setValue((v) => `${v}${v ? '\n\n' : ''}[file: ${file.name}]\n${text}`)
+        }
+      }}
+      style={dropping ? { outline: '1px dashed var(--line-5)', outlineOffset: -3 } : undefined}
+    >
       <div
         className="mx-auto"
         style={{ maxWidth: 'var(--thread-measure)' }}

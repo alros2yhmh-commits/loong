@@ -37,6 +37,8 @@ interface ThreadProps {
   canRewindRun?: boolean
   /** the column's own width grips — off for the right pane in split view */
   grips?: boolean
+  /** dims every block but the last — reading a long run without noise */
+  zen?: boolean
   /** bumps whenever a message is sent, so the view snaps to the new tail */
   pinTail?: number
 }
@@ -125,6 +127,7 @@ export function Thread({
   canRewindRun = false,
   grips = true,
   pinTail = 0,
+  zen = false,
 }: ThreadProps) {
   const scroller = useRef<HTMLDivElement>(null)
   /* the view follows the tail while the reader is at the tail. Scroll up to
@@ -201,6 +204,7 @@ export function Thread({
 
   const start = Math.max(0, blocks.length - limit)
   const visible = start > 0 ? blocks.slice(start) : blocks
+  const groups = groupBlocks(visible)
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
@@ -240,10 +244,17 @@ export function Thread({
             show {start.toLocaleString()} earlier
           </button>
         )}
-        {groupBlocks(visible).map((group, key) => {
+        {groups.map((group, key) => {
           if (group.kind === 'block') {
             return (
-              <div key={key} id={`blk-${start + group.index}`}>
+              <div
+                key={key}
+                id={`blk-${start + group.index}`}
+                style={{
+                  opacity: zen && key !== groups.length - 1 ? 0.22 : 1,
+                  transition: 'opacity 160ms ease',
+                }}
+              >
                 <BlockView
                   block={group.block}
                   onDecide={onDecide}

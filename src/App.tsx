@@ -8,6 +8,7 @@ import { Rail } from './components/Rail'
 import { Resizer } from './components/Resizer'
 import { RunBar } from './components/RunBar'
 import { RunStatus } from './components/RunStatus'
+import { StudioStrip } from './components/StudioStrip'
 import { Settings } from './components/Settings'
 import { Thread } from './components/Thread'
 import { ThreadDrawer } from './components/ThreadDrawer'
@@ -651,6 +652,28 @@ export default function App() {
   /* ---- toasts: the run speaks when you are not looking ------------------- */
 
   const [toast, setToast] = useState<string | null>(null)
+  /** dims everything but the active block — a reading mode, not a theme */
+  const [zen, setZen] = useState(false)
+
+  /* the pointer light: one passive listener, one CSS variable, rAF-throttled */
+  const pointerLightRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = pointerLightRef.current
+    if (!el) return
+    let raf = 0
+    const move = (e: PointerEvent) => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        el.style.setProperty('--mx', `${e.clientX}px`)
+        el.style.setProperty('--my', `${e.clientY}px`)
+      })
+    }
+    window.addEventListener('pointermove', move, { passive: true })
+    return () => {
+      window.removeEventListener('pointermove', move)
+      cancelAnimationFrame(raf)
+    }
+  }, [])
   useEffect(() => {
     if (!toast) return
     const t = window.setTimeout(() => setToast(null), 4_500)
@@ -1099,6 +1122,7 @@ export default function App() {
             if (last) void rewind(last.runId)
           }}
           canRewindRun={checkpoints.length > 0}
+          zen={zen}
         />
       </div>
     )
@@ -1138,6 +1162,17 @@ export default function App() {
         }
       >
         <Noise />
+        {/* the light follows the pointer — a 4% lift where the reader is
+            looking, nothing else. One element, no listeners on children. */}
+        <div
+          ref={pointerLightRef}
+          aria-hidden="true"
+          className="pointer-events-none fixed inset-0 z-[1]"
+          style={{
+            background:
+              'radial-gradient(520px circle at var(--mx, 50%) var(--my, 30%), rgba(255,255,255,0.035), transparent 62%)',
+          }}
+        />
 
         <Rail
           soundOn={settings.soundEnabled}
@@ -1310,6 +1345,15 @@ export default function App() {
               />
             </div>
           )}
+
+          {/* the instruments: shape of the run, a scrubber, presence, zen */}
+          <StudioStrip
+            blocks={stream.blocks}
+            phase={stream.phase}
+            running={stream.running}
+            zen={zen}
+            onZen={() => setZen((z) => !z)}
+          />
 
           <div ref={transcriptRef} className="relative flex min-h-0 flex-1">
             {splitId ? (
