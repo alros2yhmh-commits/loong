@@ -72,7 +72,13 @@ export default function App() {
   /* which pane the composer, run bar and shortcuts drive */
   const [splitFocus, setSplitFocus] = useState<'primary' | 'secondary'>('primary')
   const [loadingThread, setLoadingThread] = useState(false)
-  const [workspace, setWorkspace] = useState<string | null>(null)
+  /* a path is the same path however it is written: case on Windows, a trailing
+   slash, forward or backward separators. An exact string compare is how "the
+   folder did not change" was reported for a folder that had. */
+const samePath = (a: string, b: string): boolean =>
+  a.replace(/[\\/]+$/, '').toLowerCase() === b.replace(/[\\/]+$/, '').toLowerCase()
+
+const [workspace, setWorkspace] = useState<string | null>(null)
   const [mode, setMode] = useState<'ask' | 'plan' | 'agent'>('agent')
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
@@ -227,7 +233,7 @@ export default function App() {
       for (let i = 0; i < 24; i++) {
         try {
           const h = await api.health()
-          if (h.workspace === path) {
+          if (samePath(h.workspace ?? '', path)) {
             setHealth(h)
             break
           }
@@ -328,7 +334,10 @@ export default function App() {
       setActiveId(null)
       return null
     }
-  }, [settings.provider, settings.model])
+    /* the workspace belongs in the deps: without it this callback closes over
+       the folder from an older render, and every new session is filed under
+       the project we just left — "it keeps going back to the same folder" */
+  }, [settings.provider, settings.model, workspace])
 
   /* the recovery, wired once both halves exist: a thread that was deleted
      under us falls back to the newest that still lives, or a fresh one */
@@ -345,6 +354,7 @@ export default function App() {
       recoveringRef.current = false
     }
   }
+
 
   /**
    * Delete a thread, for good.
@@ -438,7 +448,7 @@ export default function App() {
         for (let i = 0; i < 24; i++) {
           try {
             const h = await api.health()
-            if (h.workspace === picked) {
+            if (samePath(h.workspace ?? '', picked)) {
               setHealth(h)
               break
             }
@@ -461,6 +471,16 @@ export default function App() {
       console.error('[loong] workspace change failed:', err)
     }
   }, [workspace])
+
+  /* a new project is one act: pick the folder, move the agent to it, and open
+     a session inside it. Picking a folder alone left the reader on an empty
+     column in a project with no thread. */
+  const newProject = useCallback(async () => {
+    await changeWorkspace()
+    await createThread()
+  }, [changeWorkspace, createThread])
+
+
 
   /* ---- first paint ------------------------------------------------------ */
 
@@ -1278,7 +1298,7 @@ export default function App() {
           open={sidebarOpen}
           onToggle={() => setSidebarOpen((v) => !v)}
           onNewThread={() => void createThread()}
-          onNewProject={() => void changeWorkspace()}
+          onNewProject={() => void newProject()}
           onSearch={() => setPaletteOpen(true)}
           onOpenSettings={() => setSettingsOpen(true)}
           soundOn={settings.soundEnabled}
