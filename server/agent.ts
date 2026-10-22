@@ -26,6 +26,7 @@ import { memoryBlock } from './memory.ts'
 import { beginTrace, endTrace, noteStep, recordToolSpan } from './trace.ts'
 import { mcpTools } from './mcp.ts'
 import { createTerminalTool, killShell } from './pty.ts'
+import { createCodeTool } from './codeact.ts'
 import { compareScreensTool, createRunProjectTool, stopProject } from './project-run.ts'
 import {
   cancelRunApprovals,
@@ -921,6 +922,9 @@ export async function runAgent(opts: RunOptions): Promise<void> {
   if (mode === 'agent') {
     ;(tools as Record<string, unknown>).propose_changes =
       createProposeChangesTool(runId, autoApprove)
+    /* CodeAct: one small program instead of ten tool calls — a loop, a filter
+       and three writes in a single step. The 288-call run is the reason. */
+    ;(tools as Record<string, unknown>).run_code = createCodeTool(autoApprove)
     /* the last step before "done": each criterion, met or not, with evidence */
     ;(tools as Record<string, unknown>).audit = createAuditTool((audit) => {
       emit({
