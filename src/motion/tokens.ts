@@ -27,16 +27,19 @@ export const spring = {
 } satisfies Record<string, MotionProps['transition']>
 
 /** enter/exit for a block of content arriving in the thread */
+/* Calm by default: a fade, not a slide. Nothing on screen should announce
+   itself with movement — ChatGPT settled on this years ago and the reason is
+   that motion used sparingly is motion that means something. */
 export const enterBlock = {
-  initial: { opacity: 0, y: 6 },
-  animate: { opacity: 1, y: 0 },
-  exit: { opacity: 0, y: -3 },
-  transition: { duration: dur.enter, ease: easeOut },
+  initial: { opacity: 0 },
+  animate: { opacity: 1 },
+  exit: { opacity: 0 },
+  transition: { duration: dur.hover, ease: easeOut },
 } satisfies MotionProps
 
 /** list items, staggered by the caller */
 export const enterRow = {
-  initial: { opacity: 0, x: 8 },
-  animate: { opacity: 1, x: 0 },
+  initial: { opacity: 0 },
+  animate: { opacity: 1 },
   transition: { duration: dur.enter, ease: easeOut },
 } satisfies MotionProps

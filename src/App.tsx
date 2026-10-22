@@ -4,7 +4,7 @@ import { Composer } from './components/Composer'
 import { CommandPalette, type Command } from './components/CommandPalette'
 import { ArtifactsPanel, countArtifacts } from './components/ArtifactsPanel'
 import { Noise } from './components/Noise'
-import { Rail } from './components/Rail'
+import { Sidebar } from './components/Sidebar'
 import { Resizer } from './components/Resizer'
 import { RunBar } from './components/RunBar'
 import { RunStatus } from './components/RunStatus'
@@ -656,26 +656,14 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null)
   /** dims everything but the active block — a reading mode, not a theme */
   const [zen, setZen] = useState(false)
-
-  /* the pointer light: one passive listener, one CSS variable, rAF-throttled */
-  const pointerLightRef = useRef<HTMLDivElement>(null)
+  /* one column on the left, like every thread list a person already knows */
+  const [sidebarOpen, setSidebarOpen] = useState(
+    () => localStorage.getItem('loong.sidebar') !== 'closed',
+  )
   useEffect(() => {
-    const el = pointerLightRef.current
-    if (!el) return
-    let raf = 0
-    const move = (e: PointerEvent) => {
-      cancelAnimationFrame(raf)
-      raf = requestAnimationFrame(() => {
-        el.style.setProperty('--mx', `${e.clientX}px`)
-        el.style.setProperty('--my', `${e.clientY}px`)
-      })
-    }
-    window.addEventListener('pointermove', move, { passive: true })
-    return () => {
-      window.removeEventListener('pointermove', move)
-      cancelAnimationFrame(raf)
-    }
-  }, [])
+    localStorage.setItem('loong.sidebar', sidebarOpen ? 'open' : 'closed')
+  }, [sidebarOpen])
+
   useEffect(() => {
     if (!toast) return
     const t = window.setTimeout(() => setToast(null), 4_500)
@@ -1168,32 +1156,29 @@ export default function App() {
         }
       >
         <Noise />
-        {/* the light follows the pointer — a 4% lift where the reader is
-            looking, nothing else. One element, no listeners on children. */}
-        <div
-          ref={pointerLightRef}
-          aria-hidden="true"
-          className="pointer-events-none fixed inset-0 z-[1]"
-          style={{
-            background:
-              'radial-gradient(520px circle at var(--mx, 50%) var(--my, 30%), rgba(255,255,255,0.035), transparent 62%)',
-          }}
-        />
 
-        <Rail
+        <Sidebar
+          sessions={drawerSessions}
+          activeId={activeId}
+          runningIds={mergedRunningIds}
+          workspace={workspace}
+          open={sidebarOpen}
+          onToggle={() => setSidebarOpen((v) => !v)}
+          onNewThread={() => void createThread()}
+          onSearch={() => setPaletteOpen(true)}
+          onOpenSettings={() => setSettingsOpen(true)}
           soundOn={settings.soundEnabled}
           onToggleSound={toggleSound}
           theme={settings.theme}
-          onToggleTheme={() =>
-            set('theme', settings.theme === 'dark' ? 'light' : 'dark')
-          }
-          drawerPinned={drawer.pinned}
-          onTogglePin={() => drawer.setPinned(!drawer.pinned)}
-          onOpenPalette={() => setPaletteOpen(true)}
-          onOpenSettings={() => setSettingsOpen(true)}
-          onNewThread={() => void createThread()}
-          onPeekDrawer={drawer.peek}
+          onToggleTheme={() => set('theme', settings.theme === 'dark' ? 'light' : 'dark')}
+          onSelect={(s) => {
+            sound.play('select')
+            void openThread(s.id)
+          }}
+          onRename={renameThread}
+          onDelete={(id) => setDeleteTarget(id)}
         />
+
 
         <Resizer
           onPointerDown={railSize.begin}
@@ -1440,15 +1425,6 @@ export default function App() {
             open={drawer.open}
             pinned={drawer.pinned}
             onTogglePin={() => drawer.setPinned(!drawer.pinned)}
-            sessions={drawerSessions}
-            activeId={activeId ?? ''}
-            onSelect={(s) => {
-              sound.play('select')
-              void openThread(s.id)
-            }}
-            onRename={renameThread}
-            onDelete={(id) => setDeleteTarget(id)}
-            runningIds={mergedRunningIds}
             artifacts={<ArtifactsPanel blocks={stream.blocks} />}
             artifactCount={artifactCount}
             agents={

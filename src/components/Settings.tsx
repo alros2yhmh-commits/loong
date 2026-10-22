@@ -116,8 +116,43 @@ export function Settings({
 
             <div className="rule-engraved" />
 
+            {/* one row of jumps — eleven sections in a scroll is a maze, and a
+                person who came for the model should not pass the sounds to
+                reach it */}
+            <nav
+              className="flex flex-wrap items-center gap-[4px] px-[18px] py-[8px]"
+              style={{ borderBottom: '1px solid var(--line-1)' }}
+            >
+              {[
+                ['runtime', 'Runtime'],
+                ['provider', 'Model'],
+                ['memory', 'Memory'],
+                ['autonomy', 'Autonomy'],
+                ['mcp', 'MCP'],
+                ['appearance', 'Look'],
+                ['sound', 'Sound'],
+                ['motion', 'Motion'],
+                ['layout', 'Layout'],
+                ['commands', 'Commands'],
+                ['analytics', 'Analytics'],
+              ].map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  className="ctl mono rounded-[5px] px-[7px] py-[3px] text-[10.5px]"
+                  style={{ border: '1px solid var(--line-2)', color: 'var(--text-3)' }}
+                  onClick={() => {
+                    document.getElementById(id)?.scrollIntoView({ block: 'start' })
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </nav>
+
             <div className="min-h-0 flex-1 overflow-y-auto">
               <Section
+                id="runtime"
                 title="Runtime"
                 note="The agent is a separate local process. It is the only thing that ever sees an API key."
               >
@@ -157,6 +192,7 @@ export function Settings({
               </Section>
 
               <Section
+                id="provider"
                 title="Provider"
                 note="Where the model comes from. Keys are sent to the local agent process and are never held by the interface."
               >
@@ -429,6 +465,7 @@ export function Settings({
               </Section>
 
               <Section
+                id="appearance"
                 title="Appearance"
                 note="One monochrome ramp, read from either end. There is no accent colour to configure."
               >
@@ -458,6 +495,7 @@ export function Settings({
               </Section>
 
               <Section
+                id="sound"
                 title="Sound"
                 note="Generated from parameters at runtime, so there is no audio file to find. Off by default, and deliberately quiet when on."
               >
@@ -500,6 +538,7 @@ export function Settings({
               </Section>
 
               <Section
+                id="motion"
                 title="Motion"
                 note="System follows the operating system. Reduced stills every animation in the app, including the springs."
               >
@@ -523,6 +562,7 @@ export function Settings({
               </Section>
 
               <Section
+                id="commands"
                 title="Commands"
                 note="Saved prompts you invoke as /name args in the composer. $ARGUMENTS is replaced with whatever follows the name. They are prompts, not code — edit, add and delete freely."
               >
@@ -530,6 +570,7 @@ export function Settings({
               </Section>
 
               <Section
+                id="autonomy"
                 title="Autonomy"
                 note="Confidence-gated writes for full-trust mode, borrowed from TypeSafe's Jev: run a write only when the decision model is sure enough; below the threshold it parks for you instead."
               >
@@ -537,6 +578,7 @@ export function Settings({
               </Section>
 
               <Section
+                id="analytics"
                 title="Analytics"
                 note="What the runs actually cost — time, tokens, outcomes and the slowest tools. Read from the local traces; nothing leaves this machine."
               >
@@ -544,6 +586,7 @@ export function Settings({
               </Section>
 
               <Section
+                id="layout"
                 title="Layout"
                 note="Rail, thread column and the saved-threads drawer are all draggable. Drag their edges, double-click an edge to reset it."
               >
@@ -566,6 +609,7 @@ export function Settings({
               </Section>
 
               <Section
+                id="mcp"
                 title="MCP servers"
                 note="Other systems the agent can reach — a browser's DevTools, a database, a tracker. Their tools join every run, and every non-read-only call still asks first."
               >
@@ -573,6 +617,7 @@ export function Settings({
               </Section>
 
               <Section
+                id="memory"
                 title="Memory"
                 note="Facts the agent kept across sessions — this project first, then the ones that are true everywhere. Delete one and it is gone for good."
               >
@@ -839,17 +884,19 @@ function AutonomyPanel() {
 }
 
 function Section({
+  id,
   title,
   note,
   children,
 }: {
+  id?: string
   title: string
   note: string
   children: React.ReactNode
 }) {
   const [open, setOpen] = useState(true)
   return (
-    <section style={{ borderBottom: '1px solid var(--line-1)' }}>
+    <section id={id} style={{ borderBottom: '1px solid var(--line-1)', scrollMarginTop: 8 }}>
       <button
         type="button"
         className="flex w-full items-center gap-[8px] px-[18px] pt-[14px] pb-[6px] text-left"

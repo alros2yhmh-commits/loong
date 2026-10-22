@@ -17,13 +17,7 @@ interface ThreadDrawerProps {
   open: boolean
   pinned: boolean
   onTogglePin: () => void
-  sessions: Session[]
-  activeId: string
-  onSelect: (s: Session) => void
-  onRename: (id: string, title: string) => void
-  /** delete a thread — the caller asks for confirmation, this only reports */
-  onDelete: (id: string) => void
-  /** the artifacts tab's content — omitted means no tab, just the threads */
+  /** the artifacts tab's content — omitted means no tab */
   artifacts?: React.ReactNode
   /** how many artifacts there are, for the tab's count */
   artifactCount?: number
@@ -33,53 +27,21 @@ interface ThreadDrawerProps {
   agentCount?: number
   /** the repository review tab's content — omitted means no tab */
   review?: React.ReactNode
-  /** threads with a turn in flight — each gets a dot */
-  runningIds?: string[]
 }
 
 export function ThreadDrawer({
   open,
   pinned,
   onTogglePin,
-  sessions,
-  activeId,
-  onSelect,
-  onRename,
-  onDelete,
   artifacts,
   artifactCount = 0,
   agents,
   agentCount = 0,
   review,
-  runningIds = [],
 }: ThreadDrawerProps) {
-  const [tab, setTab] = useState<'threads' | 'artifacts' | 'agents' | 'review'>('threads')
-  const pinnedSessions = sessions.filter((s) => s.pinned)
-  const rest = sessions.filter((s) => !s.pinned)
-  /* threads are grouped by the project they belong to — the current folder
-     first, then the others, each labelled by folder name */
-  const folderOf = (s: (typeof sessions)[number]) =>
-    s.workspace ? s.workspace.split(/[\\/]/).filter(Boolean).pop() ?? s.workspace : null
-  const currentProject = sessions.find((s) => s.id === activeId)?.workspace
-    ? folderOf(sessions.find((s) => s.id === activeId)!)
-    : null
-  const projectGroups = (() => {
-    const map = new Map<string | null, typeof rest>()
-    for (const s of rest) {
-      const key = folderOf(s)
-      const list = map.get(key) ?? []
-      list.push(s)
-      map.set(key, list)
-    }
-    return [...map.entries()].sort(([a], [b]) => {
-      if (a === currentProject) return -1
-      if (b === currentProject) return 1
-      return (a ?? 'zzz').localeCompare(b ?? 'zzz')
-    })
-  })()
-  const tabs: { id: 'threads' | 'artifacts' | 'agents' | 'review'; label: string }[] = [
-    { id: 'threads', label: 'Threads' },
-  ]
+  /* threads live in the sidebar now — this drawer is only what a thread produces */
+  const [tab, setTab] = useState<'artifacts' | 'agents' | 'review'>('artifacts')
+  const tabs: { id: 'artifacts' | 'agents' | 'review'; label: string }[] = []
   if (artifacts) tabs.push({ id: 'artifacts', label: 'Outputs' })
   if (agents) tabs.push({ id: 'agents', label: 'Agents' })
   if (review) tabs.push({ id: 'review', label: 'Review' })
@@ -117,13 +79,13 @@ export function ThreadDrawer({
             <header className="flex items-center justify-between px-[14px] pt-[13px] pb-[8px]">
               <div className="flex items-baseline gap-[8px]">
                 <h2 className="text-[13px]" style={{ color: 'var(--text-1)' }}>
-                  {tab === 'threads' ? 'Saved' : tab === 'artifacts' ? 'Artifacts' : tab === 'agents' ? 'Agents' : 'Review'}
+                  {tab === 'artifacts' ? 'Artifacts' : tab === 'agents' ? 'Agents' : 'Review'}
                 </h2>
                 <span
                   className="mono text-[11px]"
                   style={{ color: 'var(--text-4)' }}
                 >
-                  {tab === 'threads' ? sessions.length : tab === 'artifacts' ? artifactCount : tab === 'agents' ? agentCount : ''}
+                  {tab === 'artifacts' ? artifactCount : tab === 'agents' ? agentCount : ''}
                 </span>
               </div>
               <div className="flex items-center gap-[6px]">
@@ -164,59 +126,13 @@ export function ThreadDrawer({
             <div className="rule-engraved mx-[14px]" />
 
             <div className="min-h-0 flex-1 overflow-y-auto px-[8px] py-[8px]">
-              {tab === 'artifacts' && artifacts ? (
-                artifacts
-              ) : tab === 'agents' && agents ? (
-                agents
-              ) : tab === 'review' && review ? (
-                review
-              ) : (
-                <>
-              {pinnedSessions.length > 0 && (
-                <>
-                  <GroupLabel>Pinned</GroupLabel>
-                  {pinnedSessions.map((s, i) => (
-                    <Row
-                      key={s.id}
-                      session={s}
-                      active={s.id === activeId}
-                      running={runningIds.includes(s.id)}
-                      index={i}
-                      onSelect={onSelect}
-                      onRename={onRename}
-                      onDelete={onDelete}
-                    />
-                  ))}
-                  <div className="mx-[6px] my-[10px]">
-                    <div className="rule-engraved" />
-                  </div>
-                </>
-              )}
-              <GroupLabel>Recent</GroupLabel>
-              {projectGroups.map(([project, rows]) => (
-                <div key={project ?? 'none'} className="flex flex-col">
-                  <p
-                    className="mono px-[8px] pb-[3px] pt-[6px] text-[9.5px] tracking-[0.08em]"
-                    style={{ color: project === currentProject ? 'var(--text-2)' : 'var(--text-4)' }}
-                  >
-                    {project === currentProject ? '◆ ' : ''}{project ?? 'no project'} · {rows.length}
-                  </p>
-                  {rows.map((s, i) => (
-                    <Row
-                      key={s.id}
-                      session={s}
-                      active={s.id === activeId}
-                      running={runningIds.includes(s.id)}
-                      index={i + pinnedSessions.length}
-                      onSelect={onSelect}
-                      onRename={onRename}
-                      onDelete={onDelete}
-                    />
-                  ))}
-                </div>
-              ))}
-                </>
-              )}
+              {tab === 'artifacts' && artifacts
+                ? artifacts
+                : tab === 'agents' && agents
+                  ? agents
+                  : tab === 'review' && review
+                    ? review
+                    : null}
             </div>
 
             <footer
@@ -234,18 +150,7 @@ export function ThreadDrawer({
   )
 }
 
-function GroupLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <p
-      className="px-[8px] pt-[4px] pb-[6px] text-[10px] tracking-[0.09em] uppercase"
-      style={{ color: 'var(--text-4)' }}
-    >
-      {children}
-    </p>
-  )
-}
-
-function Row({
+export function Row({
   session,
   active,
   running,
