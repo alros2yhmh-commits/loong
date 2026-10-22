@@ -1020,13 +1020,6 @@ export default function App() {
         run: toggleSound,
       },
       {
-        id: 'theme',
-        group: 'Layout',
-        label:
-          settings.theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme',
-        run: () => set('theme', settings.theme === 'dark' ? 'light' : 'dark'),
-      },
-      {
         id: 'reset-layout',
         group: 'Layout',
         label: 'Reset every panel to its default width',
@@ -1191,6 +1184,7 @@ export default function App() {
           open={sidebarOpen}
           onToggle={() => setSidebarOpen((v) => !v)}
           onNewThread={() => void createThread()}
+          onNewProject={() => void changeWorkspace()}
           onSearch={() => setPaletteOpen(true)}
           onOpenSettings={() => setSettingsOpen(true)}
           soundOn={settings.soundEnabled}

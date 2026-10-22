@@ -27,6 +27,7 @@ export function Sidebar({
   open,
   onToggle,
   onNewThread,
+  onNewProject,
   onSearch,
   onOpenSettings,
   soundOn,
@@ -42,6 +43,8 @@ export function Sidebar({
   open: boolean
   onToggle: () => void
   onNewThread: () => void
+  /** pick a folder — that folder becomes the project, and its threads appear */
+  onNewProject: () => void
   onSearch: () => void
   onOpenSettings: () => void
   soundOn: boolean
@@ -157,6 +160,25 @@ export function Sidebar({
             <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
           </svg>
           New thread
+        </button>
+        {/* a project and a session inside it are two different acts: one picks
+            the folder, the other opens a thread in the folder already open */}
+        <button
+          type="button"
+          onClick={onNewProject}
+          className="ctl flex items-center gap-[8px] rounded-[8px] px-[9px] py-[6px] text-left text-[12px]"
+          style={{ color: 'var(--text-3)' }}
+          title="Open a folder as a project"
+        >
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
+            <path
+              d="M2 4.2h4.4l1.3 1.4H14v7.2H2z"
+              stroke="currentColor"
+              strokeWidth="1.3"
+              strokeLinejoin="round"
+            />
+          </svg>
+          Open project…
         </button>
         <button
           type="button"
