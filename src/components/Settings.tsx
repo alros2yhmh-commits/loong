@@ -574,46 +574,72 @@ export function Settings({
 
               <Section
                 title="Memory"
-                note="Facts the agent saved across sessions. Delete one and it is gone for good — this is the whole store, not a summary."
+                note="Facts the agent kept across sessions — this project first, then the ones that are true everywhere. Delete one and it is gone for good."
               >
                 {memory.length === 0 ? (
-                  <p
-                    className="mono m-0 px-[2px] py-[4px] text-[11px]"
-                    style={{ color: 'var(--text-4)' }}
-                  >
-                    Nothing saved yet. The agent writes here when it calls remember.
+                  <p className="m-0 px-[2px] py-[6px] text-[12px]" style={{ color: 'var(--text-4)' }}>
+                    Nothing saved yet. The agent writes here when you tell it to remember something.
                   </p>
                 ) : (
-                  <div className="flex flex-col gap-[8px]">
-                    {memory.map((m) => (
-                      <div key={m.id} className="flex items-start gap-[9px]">
-                        <div className="min-w-0 flex-1">
-                          <p className="m-0 text-[12px] leading-[1.5]" style={{ color: 'var(--text-2)' }}>
-                            {m.text}
-                          </p>
+                  (() => {
+                    const projectName = (ws: string | null) =>
+                      ws ? ws.split(/[\\/]/).filter(Boolean).pop() ?? ws : null
+                    const ago = (at: number) => {
+                      const d = Math.round((Date.now() - at) / 86_400_000)
+                      if (d <= 0) return 'today'
+                      if (d === 1) return 'yesterday'
+                      if (d < 30) return `${d} days ago`
+                      return new Date(at).toLocaleDateString()
+                    }
+                    const mine = memory.filter((m) => m.workspace !== null)
+                    const world = memory.filter((m) => m.workspace === null)
+                    const group = (label: string, rows: typeof memory) =>
+                      rows.length === 0 ? null : (
+                        <div className="flex flex-col gap-[6px]">
                           <p
-                            className="mono m-0 mt-[1px] text-[9.5px]"
+                            className="mono m-0 text-[9.5px] tracking-[0.1em] uppercase"
                             style={{ color: 'var(--text-4)' }}
                           >
-                            {m.workspace === null ? 'global' : 'this project'} ·{' '}
-                            {new Date(m.at).toLocaleDateString()}
+                            {label} · {rows.length}
                           </p>
+                          {rows.map((m) => (
+                            <div
+                              key={m.id}
+                              className="group flex items-start gap-[10px] rounded-[7px] px-[9px] py-[7px]"
+                              style={{ border: '1px solid var(--line-2)', background: 'var(--surface-sunken)' }}
+                            >
+                              <div className="min-w-0 flex-1">
+                                <p className="m-0 text-[12.5px] leading-[1.5]" style={{ color: 'var(--text-1)' }}>
+                                  {m.text}
+                                </p>
+                                <p className="mono m-0 mt-[3px] text-[9.5px]" style={{ color: 'var(--text-4)' }}>
+                                  {m.workspace === null ? 'everywhere' : `project · ${projectName(m.workspace)}`} · {ago(m.at)}
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                className="ctl shrink-0 rounded-[5px] px-[7px] py-[3px] text-[10.5px] opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus:opacity-100"
+                                style={{ border: '1px solid var(--line-2)', color: 'var(--text-3)' }}
+                                title="Delete this fact"
+                                onClick={() => {
+                                  void api
+                                    .forgetMemory(m.id)
+                                    .then(() => setMemory((prev) => prev.filter((x) => x.id !== m.id)))
+                                }}
+                              >
+                                forget
+                              </button>
+                            </div>
+                          ))}
                         </div>
-                        <button
-                          type="button"
-                          className="ctl shrink-0 rounded-[5px] px-[7px] py-[2px] text-[10.5px]"
-                          style={{ border: '1px solid var(--line-2)', color: 'var(--text-4)' }}
-                          onClick={() => {
-                            void api
-                              .forgetMemory(m.id)
-                              .then(() => setMemory((prev) => prev.filter((x) => x.id !== m.id)))
-                          }}
-                        >
-                          forget
-                        </button>
+                      )
+                    return (
+                      <div className="flex flex-col gap-[14px]">
+                        {group('This project', mine)}
+                        {group('Everywhere', world)}
                       </div>
-                    ))}
-                  </div>
+                    )
+                  })()
                 )}
               </Section>
             </div>

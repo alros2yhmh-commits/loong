@@ -6,6 +6,7 @@ import { mkdir, readFile, readdir, rm, rename, stat, writeFile } from 'node:fs/p
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import type { Dirent } from 'node:fs'
 import { lookup } from 'node:dns/promises'
+import { searchHistory } from './history.ts'
 import { dirname, join, relative } from 'node:path'
 import {
   FETCH_TIMEOUT_MS,
@@ -1432,6 +1433,27 @@ export const forgetTool = tool({
   execute: async ({ id }) => (forget(id) ? `Forgot ${id}.` : `No memory entry with id ${id}.`),
 })
 
+/** search every conversation ever held, in this project first and then the
+    others — memory is what was kept; this is what was SAID */
+export const pastSessionsTool = tool({
+  description:
+    'Search the conversations of every past session — this project first, then other projects, each labelled with its folder. Use it when the user refers to something discussed before ("we tried that last week", "what did the build print"), or before re-doing work that may already be done. The result names the thread; open it to read more.',
+  inputSchema: z.object({
+    query: z.string().describe('Words to look for across titles and messages.'),
+  }),
+  execute: async ({ query }) => {
+    const hits = searchHistory(query)
+    if (hits.length === 0) return `No past conversation matches "${query}".`
+    return hits
+      .map((h) => {
+        const where = h.currentProject ? 'this project' : h.project ? `project ${h.project}` : 'unassigned project'
+        const when = new Date(h.at).toISOString().slice(0, 10)
+        return `- [${when}] (${where}) "${h.title}" — ${h.snippet}  [session ${h.sessionId}]`
+      })
+      .join('\n')
+  },
+})
+
 export const TOOLS = {
   list_dir: listDir,
   read_file: readFileTool,
@@ -1460,6 +1482,7 @@ export const TOOLS = {
   browser: browserTool,
   remember: rememberTool,
   recall: recallTool,
+  past_sessions: pastSessionsTool,
   forget: forgetTool,
 }
 

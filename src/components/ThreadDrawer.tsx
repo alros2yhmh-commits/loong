@@ -56,6 +56,27 @@ export function ThreadDrawer({
   const [tab, setTab] = useState<'threads' | 'artifacts' | 'agents' | 'review'>('threads')
   const pinnedSessions = sessions.filter((s) => s.pinned)
   const rest = sessions.filter((s) => !s.pinned)
+  /* threads are grouped by the project they belong to — the current folder
+     first, then the others, each labelled by folder name */
+  const folderOf = (s: (typeof sessions)[number]) =>
+    s.workspace ? s.workspace.split(/[\\/]/).filter(Boolean).pop() ?? s.workspace : null
+  const currentProject = sessions.find((s) => s.id === activeId)?.workspace
+    ? folderOf(sessions.find((s) => s.id === activeId)!)
+    : null
+  const projectGroups = (() => {
+    const map = new Map<string | null, typeof rest>()
+    for (const s of rest) {
+      const key = folderOf(s)
+      const list = map.get(key) ?? []
+      list.push(s)
+      map.set(key, list)
+    }
+    return [...map.entries()].sort(([a], [b]) => {
+      if (a === currentProject) return -1
+      if (b === currentProject) return 1
+      return (a ?? 'zzz').localeCompare(b ?? 'zzz')
+    })
+  })()
   const tabs: { id: 'threads' | 'artifacts' | 'agents' | 'review'; label: string }[] = [
     { id: 'threads', label: 'Threads' },
   ]
@@ -172,17 +193,27 @@ export function ThreadDrawer({
                 </>
               )}
               <GroupLabel>Recent</GroupLabel>
-              {rest.map((s, i) => (
-                <Row
-                  key={s.id}
-                  session={s}
-                  active={s.id === activeId}
-                  running={runningIds.includes(s.id)}
-                  index={i + pinnedSessions.length}
-                onSelect={onSelect}
-                onRename={onRename}
-                onDelete={onDelete}
-              />
+              {projectGroups.map(([project, rows]) => (
+                <div key={project ?? 'none'} className="flex flex-col">
+                  <p
+                    className="mono px-[8px] pb-[3px] pt-[6px] text-[9.5px] tracking-[0.08em]"
+                    style={{ color: project === currentProject ? 'var(--text-2)' : 'var(--text-4)' }}
+                  >
+                    {project === currentProject ? '◆ ' : ''}{project ?? 'no project'} · {rows.length}
+                  </p>
+                  {rows.map((s, i) => (
+                    <Row
+                      key={s.id}
+                      session={s}
+                      active={s.id === activeId}
+                      running={runningIds.includes(s.id)}
+                      index={i + pinnedSessions.length}
+                      onSelect={onSelect}
+                      onRename={onRename}
+                      onDelete={onDelete}
+                    />
+                  ))}
+                </div>
               ))}
                 </>
               )}

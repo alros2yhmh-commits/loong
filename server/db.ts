@@ -24,6 +24,10 @@ export interface SessionRow {
   updatedAt: number
   provider: string | null
   model: string | null
+  /** the workspace this thread belongs to — a session is part of a PROJECT,
+      and memory and recall are scoped by it. Null on threads from before
+      the field existed; they are treated as belonging to no project. */
+  workspace: string | null
 }
 
 export interface MessageRow {
@@ -117,6 +121,7 @@ export function createSession(input: {
   title?: string
   provider?: string
   model?: string
+  workspace?: string | null
 }): SessionRow {
   const now = Date.now()
   const row: SessionRow = {
@@ -126,6 +131,7 @@ export function createSession(input: {
     updatedAt: now,
     provider: input.provider ?? null,
     model: input.model ?? null,
+    workspace: input.workspace ?? null,
   }
   store.sessions.push(row)
   flush()

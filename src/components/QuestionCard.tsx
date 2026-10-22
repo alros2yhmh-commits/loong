@@ -105,12 +105,20 @@ export function QuestionCard({ request, answer, onAnswer }: QuestionCardProps) {
         background: 'var(--surface-sunken)',
       }}
     >
-      <p
-        className="m-0 text-[10px] tracking-[0.1em] uppercase"
-        style={{ color: 'var(--text-4)' }}
-      >
-        Waiting on you
-      </p>
+      <div className="flex items-center gap-[7px]">
+        <motion.span
+          className="block h-[5px] w-[5px] shrink-0 rounded-full"
+          style={{ background: 'var(--text-2)' }}
+          animate={{ opacity: [0.35, 1, 0.35] }}
+          transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
+        />
+        <p
+          className="mono m-0 text-[10px] tracking-[0.1em] uppercase"
+          style={{ color: 'var(--text-3)' }}
+        >
+          Waiting on you
+        </p>
+      </div>
 
       <Clamped text={request.question} id={request.id} />
 
@@ -144,7 +152,10 @@ export function QuestionCard({ request, answer, onAnswer }: QuestionCardProps) {
         </div>
       )}
 
-      <div className="mt-[9px] flex items-start gap-[8px]">
+      <div
+        className="mt-[9px] flex items-start gap-[8px] rounded-[7px] px-[9px] py-[7px]"
+        style={{ border: '1px solid var(--line-2)', background: 'var(--canvas)' }}
+      >
         <textarea
           ref={input}
           value={draft}

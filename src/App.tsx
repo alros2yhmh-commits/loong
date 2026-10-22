@@ -52,6 +52,7 @@ function toSession(s: ServerSession): Session {
           : mins < 1440
             ? `${Math.round(mins / 60)}h`
             : `${Math.round(mins / 1440)}d`,
+    workspace: s.workspace,
   }
 }
 
@@ -244,6 +245,7 @@ export default function App() {
       const { session } = await api.createSession({
         provider: settings.provider,
         model: settings.model,
+        workspace: workspace ?? undefined,
       })
       setSessions((prev) => [session, ...prev])
       setActiveId(session.id)
@@ -541,7 +543,7 @@ export default function App() {
     void sendRef.current(next.text, next.images)
   }, [stream.running, queued])
 
-  const drawer = useEdgeReveal({ zone: 4, width: drawerSize.size, grace: 620 })
+  const drawer = useEdgeReveal({ zone: 4, width: drawerSize.size, grace: 320 })
 
   /* ---- the run bar: goal, plan, clock, context budget -------------------- */
 
@@ -986,6 +988,7 @@ export default function App() {
                     const { session } = await api.createSession({
                       provider: settings.provider,
                       model: settings.model,
+                      workspace: workspace ?? undefined,
                     })
                     setSessions((prev) => [session, ...prev])
                     await openSplit(session.id)

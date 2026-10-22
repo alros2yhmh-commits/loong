@@ -167,7 +167,11 @@ const MAX_STEPS = (() => {
 })()
 /* four attempts, not three: a shared free tier can stay saturated for ten
    seconds, and giving up after 6.5s is what made a healthy run look dead */
-const MAX_ATTEMPTS = 4
+/** attempts across the whole chain: a model gets RETRIES_PER_MODEL of them for a
+    transient fault, and the chain has room for several models after that */
+const MAX_ATTEMPTS = 8
+/** how many times ONE model is retried before the chain moves on */
+const RETRIES_PER_MODEL = 2
 const RETRY_BACKOFF_MS = [900, 2200, 5500, 9000]
 /* the post-run check runs the project's own build/test — a cold gradle build
    is minutes, not seconds, and a check killed at 60s is a lie either way */
@@ -239,7 +243,7 @@ const TOOLS_BLOCK = `
 TOOLS, and when to use each:
 - think_step     — think one step at a time, on the record, whenever the next
   move is not obvious. Slow yourself down; a wrong fast answer costs more.
-- remember, recall, forget — durable memory across sessions. Save a preference,
+- remember, recall, forget — durable memory across sessions. past_sessions — search what was SAID in earlier threads (this project first, then other projects), for when the user refers to something discussed before. Save a preference,
   decision or gotcha the moment the user tells you; recall before asking
   something they may already have answered. DURABLE MEMORY above is what is
   already saved.
@@ -1564,12 +1568,15 @@ export async function runAgent(opts: RunOptions): Promise<void> {
   /* the model that actually ran the last attempt — the interface shows the
      truth (the model that ran), not the saved setting (the model chosen) */
   let lastModel = opts.config.model
+  /* the model cursor is separate from the attempt cursor — see the retry note */
+  let modelIdx = 0
+  let onThisModel = 1
 
   try {
     const backoff = opts.retryBackoffMs ?? RETRY_BACKOFF_MS
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      lastModel = modelFor(attempt)
+      lastModel = modelChain[modelIdx]
       const result = await runOnce(attempt)
       if (result.ok) return
 
@@ -1615,6 +1622,24 @@ export async function runAgent(opts: RunOptions): Promise<void> {
         break
       }
 
+      /* Who pays for the failure decides who runs next.
+
+         A 429 or a dropped socket is a fault of the MOMENT, not of the model:
+         the same model, after a backoff, usually succeeds (rate limits clear
+         in seconds). The old loop advanced the model on every attempt, so one
+         rate-limited free model burned the whole chain and the run died with
+         "Failed after 2 attempts" — the interruption the user kept hitting.
+
+         A credit or capability block is a fault of the MODEL: switch at once. */
+      const transient =
+        result.empty || (isRetryable(result.error ?? '') && !capabilityBlocked && !creditBlocked)
+      if (modelIdx + 1 < modelChain.length && (!transient || onThisModel >= RETRIES_PER_MODEL)) {
+        modelIdx += 1
+        onThisModel = 1
+      } else {
+        onThisModel += 1
+      }
+
       /* a credit skip is not congestion: the account state is already known, so
          there is nothing to wait out — move to the free model at once */
       const wait = creditSkip ? 200 : (backoff[attempt - 1] ?? 4000)
@@ -1627,10 +1652,12 @@ export async function runAgent(opts: RunOptions): Promise<void> {
           waitMs: wait,
           reason: creditSkip
             ? 'the account has no credit for that model — moving to a free one'
-            : result.empty
-              ? 'the model returned nothing'
-              : result.error,
-          nextModel: modelFor(attempt + 1),
+            : transient
+              ? 'the provider was busy — the same model, after a pause'
+              : result.empty
+                ? 'the model returned nothing'
+                : result.error,
+          nextModel: modelChain[modelIdx],
         },
         ...base(runId, threadId),
       } as BaseEvent)

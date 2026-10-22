@@ -52,6 +52,8 @@ export interface Session {
   preview: string
   age: string
   pinned?: boolean
+  /** the folder this thread belongs to; null on threads from before projects */
+  workspace?: string | null
 }
 
 /** The agent has stopped and is waiting on a human before it does something it

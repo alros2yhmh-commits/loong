@@ -90,6 +90,8 @@ export interface ServerSession {
   updatedAt: number
   provider: string | null
   model: string | null
+  /** the folder this thread belongs to — threads are grouped by project */
+  workspace: string | null
 }
 
 export interface ServerMessage {
@@ -181,7 +183,7 @@ export const api = {
       }
     }>('/api/traces'),
   sessions: () => json<{ sessions: ServerSession[] }>('/api/sessions'),
-  createSession: (input: { title?: string; provider?: string; model?: string }) =>
+  createSession: (input: { title?: string; provider?: string; model?: string; workspace?: string }) =>
     json<{ session: ServerSession }>('/api/sessions', {
       method: 'POST',
       body: JSON.stringify(input),
