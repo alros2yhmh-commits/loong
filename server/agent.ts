@@ -39,7 +39,8 @@ import { estimateConfidence } from './confidence.ts'
 import { acquireWriteLease } from './leases.ts'
 import { filesForRun } from './journal.ts'
 import { scanPaths, hasCritical } from './security-gate.ts'
-import { skillsBlock } from './skills.ts'
+import { skillIndexBlock, skillsBlock } from './skills.ts'
+import { libraryIndexBlock } from './library.ts'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { clip, displayPath, getWorkspace, resolveInside } from './config.ts'
 import { unifiedDiff } from './diff.ts'
@@ -247,7 +248,15 @@ const TOOLS_BLOCK = `
 TOOLS, and when to use each:
 - think_step     — think one step at a time, on the record, whenever the next
   move is not obvious. Slow yourself down; a wrong fast answer costs more.
-- remember, recall, forget — durable memory across sessions. past_sessions — search what was SAID in earlier threads (this project first, then other projects), for when the user refers to something discussed before. Save a preference,
+- remember, recall, forget — durable memory across sessions.
+- now — the exact date and time. Use it before computing any deadline; never guess.
+- schedule — set a timer that starts a NEW thread with a prompt when it comes due
+  ("in 3 minutes", "in an hour"). The prompt must be self-contained: the new thread
+  does not see this conversation.
+- read_library / library_search — real depth on git, sql, docker, http, testing,
+  security, react, shell. Read the topic instead of guessing at the details.
+- learn_skill — save what you worked out as a SKILL for this project. Use it after
+  solving something non-obvious; it loads automatically next time. past_sessions — search what was SAID in earlier threads (this project first, then other projects), for when the user refers to something discussed before. Save a preference,
   decision or gotcha the moment the user tells you; recall before asking
   something they may already have answered. DURABLE MEMORY above is what is
   already saved.
@@ -305,11 +314,33 @@ TOOLS, and when to use each:
   with stage_paths, or stage_all for everything. A commit is history: it cannot
   be rewound, so the message says what changed and why, in the repo's style.`
 
+/* the clock. A model that does not know the date guesses it — and then
+   "in three minutes", "today", "since last week" are all invented. */
+export function nowBlock(at = new Date()): string {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const offset = -at.getTimezoneOffset() / 60
+  const human = at.toLocaleString('en-GB', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+  return `\n\nNOW — ${human} (${tz}, UTC${offset >= 0 ? '+' : ''}${offset}). The clock is real: use it for "today", deadlines, "in N minutes" and timers. Never guess the date.`
+}
+
 export function systemPrompt(
   mode: 'ask' | 'plan' | 'agent' = 'agent',
   extra?: { sessionHooks?: string; userName?: string },
 ): string {
+
   const rules = projectRulesBlock()
+  const clock = nowBlock()
+  /* level 1: the table of contents — what exists, one line each */
+  const skillsIndex = skillIndexBlock()
+  /* level 1 of the library: the table of contents, never the book */
+  const libraryIndex = libraryIndexBlock()
   const memory = memoryBlock()
   /* the reader's name, when they gave one: address them by it when natural,
      never announce that you are doing so */
@@ -321,7 +352,7 @@ export function systemPrompt(
     ? `\n\n--- project hooks (SessionStart) ---\n${extra.sessionHooks.trim()}\n--- end hooks ---`
     : ''
   if (mode === 'ask') {
-    return `${SYSTEM_PROMPT}${who}${workspaceLine()}${rules}${memory}${hooks}
+    return `${SYSTEM_PROMPT}${who}${clock}${workspaceLine()}${rules}${skillsIndex}${libraryIndex}${memory}${hooks}
 
 YOU ARE IN ASK MODE. This is a conversation, not a job.
 You have NO tools in this mode. Not one. Do not claim to have read, run, or checked
@@ -332,7 +363,7 @@ If the answer needs the workspace or the web, say which mode would be needed
 ("switch to Plan to have me look") rather than guessing at an answer.`
   }
   if (mode === 'plan') {
-    return `${SYSTEM_PROMPT}${who}${workspaceLine()}${rules}${memory}${hooks}
+    return `${SYSTEM_PROMPT}${who}${clock}${workspaceLine()}${rules}${skillsIndex}${libraryIndex}${memory}${hooks}
 
 YOU ARE IN PLAN MODE. You are a researcher, not an author.
 You may READ and SEARCH only. You cannot write, edit, delete, move, or run shell
@@ -343,7 +374,7 @@ concrete steps and what each one would change. Read enough to make the steps rea
 rather than plausible. End with the plan already visible in the list, and a short
 note on the riskiest step. Do not start executing.`
   }
-  return `${SYSTEM_PROMPT}${who}${workspaceLine()}${rules}${memory}${hooks}${TOOLS_BLOCK}
+  return `${SYSTEM_PROMPT}${who}${clock}${workspaceLine()}${rules}${skillsIndex}${libraryIndex}${memory}${hooks}${TOOLS_BLOCK}
 
 YOU ARE IN AGENT MODE. You own the task end to end.
 

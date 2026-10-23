@@ -9,6 +9,7 @@ import { sound } from '../lib/sound'
 import { dur, easeOut, spring } from '../motion/tokens'
 import { IconChevron } from './Icons'
 import { McpPanel } from './McpPanel'
+import { IntegrationsPanel } from './IntegrationsPanel'
 import { AnalyticsPanel } from './AnalyticsPanel'
 
 /* ---------------------------------------------------------------------------
@@ -151,6 +152,7 @@ export function Settings({
                 ['provider', 'Model'],
                 ['memory', 'Memory'],
                 ['autonomy', 'Autonomy'],
+                ['integrations', 'Integrations'],
                 ['mcp', 'MCP'],
                 ['appearance', 'Look'],
                 ['sound', 'Sound'],
@@ -670,6 +672,14 @@ export function Settings({
                     Restore defaults
                   </button>
                 </Row>
+              </Section>
+
+              <Section
+                id="integrations"
+                title="Integrations"
+                note="Gmail, GitHub, Notion, Drive — one click writes the MCP entry. Nothing installs until a run uses it, and every write still asks first."
+              >
+                <IntegrationsPanel />
               </Section>
 
               <Section

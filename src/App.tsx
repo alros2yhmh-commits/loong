@@ -494,6 +494,34 @@ const [workspace, setWorkspace] = useState<string | null>(null)
 
 
 
+  /* timers: the agent creates the thread when a timer comes due; the app is
+     what sends the prompt, because the key lives here. Polling every 15s is
+     enough for a feature measured in minutes, and it costs nothing. */
+  useEffect(() => {
+    let alive = true
+    const check = async () => {
+      try {
+        const { pending } = await api.timers()
+        if (!alive || pending.length === 0) return
+        for (const timer of pending) {
+          if (!timer.sessionId) continue
+          await api.ackTimer(timer.id)
+          await refreshSessions()
+          await openThread(timer.sessionId)
+          await primary.send(timer.prompt, [], timer.sessionId)
+        }
+      } catch {
+        /* the agent is between restarts — the timer waits */
+      }
+    }
+    void check()
+    const id = window.setInterval(check, 15_000)
+    return () => {
+      alive = false
+      window.clearInterval(id)
+    }
+  }, [refreshSessions, openThread, primary])
+
   /* ---- first paint ------------------------------------------------------ */
 
   /* the boot effect runs ONCE. Its callbacks now depend on the workspace (a
@@ -1322,6 +1350,7 @@ const [workspace, setWorkspace] = useState<string | null>(null)
           onRename={renameThread}
           onDelete={(id) => setDeleteTarget(id)}
           onFork={(id) => void forkThread(id)}
+          runningAgents={allAgents.filter((x) => x.running).length}
         />
 
 

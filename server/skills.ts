@@ -117,7 +117,12 @@ function parseSkill(raw: string, source: string): Skill | null {
 }
 
 function skillDirs(): string[] {
-  return [join(getWorkspace(), '.loong', 'skills'), join(DATA_DIR, 'skills')]
+  return [
+    /* the open Agent Skills layout: a folder per skill, SKILL.md inside */
+    join(getWorkspace(), 'skills'),
+    join(getWorkspace(), '.loong', 'skills'),
+    join(DATA_DIR, 'skills'),
+  ]
 }
 
 /** write the starter pack into the global dir once, so the app ships useful */
@@ -146,10 +151,17 @@ export function listSkills(): Skill[] {
       continue
     }
     for (const name of entries) {
-      if (!name.toLowerCase().endsWith('.md')) continue
       const path = join(dir, name)
       try {
-        if (!statSync(path).isFile()) continue
+        if (statSync(path).isDirectory()) {
+          /* the open layout: <dir>/<name>/SKILL.md */
+          const nested = join(path, 'SKILL.md')
+          if (!existsSync(nested)) continue
+          const skill = parseSkill(readFileSync(nested, 'utf8'), name)
+          if (skill) out.push(skill)
+          continue
+        }
+        if (!name.toLowerCase().endsWith('.md')) continue
         const skill = parseSkill(readFileSync(path, 'utf8'), name)
         if (skill) out.push(skill)
       } catch {
@@ -205,4 +217,71 @@ export function skillsBlock(text: string, cap = 3200): string {
   if (out.length <= cap) return out
   const room = Math.max(0, cap - (SKILLS_FENCE_OPEN.length + SKILLS_FENCE_CLOSE.length + 4))
   return wrap(`${body.slice(0, room)}\n…`)
+}
+
+/* ---------------------------------------------------------------------------
+   Level 1 — the index.
+
+   `skillsBlock` is level 2: it loads the bodies of the skills that matched.
+   But a model that only sees the bodies of what already matched can never
+   reach for a skill it did not know existed. The index is one line per skill,
+   always present and cheap — the table of contents, not the book.
+   --------------------------------------------------------------------------- */
+
+export function skillIndexBlock(): string {
+  const all = listSkills()
+  if (all.length === 0) return ''
+  const lines = all.map((s) => `- ${s.name}: ${s.description}`)
+  return `\n\nSKILLS AVAILABLE — playbooks that load automatically when the message matches their triggers. Read a skill's folder (references/, scripts/) with read_file when you need more than the body.\n${lines.join('\n')}`
+}
+
+/**
+ * Level 3 — the folder a skill lives in, so the model can read its references
+ * and run its scripts. The standard calls this "bundled resources": the body
+ * says what to do, the folder holds the material.
+ */
+export function skillDir(skill: Skill): string {
+  for (const dir of skillDirs()) {
+    const path = join(dir, `${skill.name}.md`)
+    if (existsSync(path)) return dir
+  }
+  return skillDirs()[0] ?? ''
+}
+
+/**
+ * The agent writing a skill for itself.
+ *
+ * This is the part no other skill system has: what Loong works out in a session
+ * — the exact command that fixed the build, the three steps this project needs
+ * before a release — becomes a skill in THIS workspace, and the next session
+ * starts already knowing it. A skill that is only ever written by a human is a
+ * skill that stops growing.
+ */
+export function learnSkill(input: {
+  name: string
+  description: string
+  body: string
+  triggers?: string
+}): { ok: boolean; path?: string; error?: string } {
+  const slug = input.name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\u0600-\u06FF-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  if (!slug) return { ok: false, error: 'the name has no usable characters' }
+  if (!input.body.trim()) return { ok: false, error: 'a skill without a body teaches nothing' }
+  const dir = join(getWorkspace(), '.loong', 'skills')
+  try {
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+    const triggers = (input.triggers ?? slug.replace(/-/g, ', ')).trim()
+    const file = join(dir, `${slug}.md`)
+    writeFileSync(
+      file,
+      `---\nname: ${input.name.trim()}\ndescription: ${input.description.trim()}\ntriggers: ${triggers}\n---\n\n${input.body.trim()}\n`,
+      'utf8',
+    )
+    return { ok: true, path: file }
+  } catch (e) {
+    return { ok: false, error: (e as Error).message }
+  }
 }

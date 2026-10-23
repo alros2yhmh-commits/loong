@@ -202,6 +202,58 @@ export const api = {
       }
     }>('/api/traces'),
   sessions: () => json<{ sessions: ServerSession[] }>('/api/sessions'),
+  /** timers: what is scheduled, and what fired while the app was away */
+  timers: () =>
+    json<{
+      timers: {
+        id: string
+        at: number
+        prompt: string
+        title: string
+        sessionId: string | null
+        firedAt: number | null
+        consumed: boolean
+      }[]
+      pending: {
+        id: string
+        at: number
+        prompt: string
+        title: string
+        sessionId: string | null
+        firedAt: number | null
+        consumed: boolean
+      }[]
+    }>('/api/timers'),
+  createTimer: (input: { after: string; prompt: string; title?: string }) =>
+    json<{ timer: { id: string; at: number } }>('/api/timers', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  cancelTimer: (id: string) =>
+    json<{ ok: boolean }>(`/api/timers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  ackTimer: (id: string) =>
+    json<{ ok: boolean }>(`/api/timers/${encodeURIComponent(id)}/ack`, { method: 'POST' }),
+  /** the integration gallery: what exists, and what is already connected */
+  integrations: () =>
+    json<{
+      integrations: {
+        id: string
+        name: string
+        blurb: string
+        needs?: string
+        docs?: string
+      }[]
+      configured: Record<string, boolean>
+    }>('/api/integrations'),
+  connectIntegration: (id: string, values?: Record<string, string>) =>
+    json<{ ok: boolean; error?: string }>(`/api/integrations/${encodeURIComponent(id)}`, {
+      method: 'POST',
+      body: JSON.stringify({ values }),
+    }),
+  disconnectIntegration: (id: string) =>
+    json<{ ok: boolean }>(`/api/integrations/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
   /** copy a thread — its words, its run — under a new id */
   forkSession: (id: string) =>
     json<{ session: ServerSession }>(`/api/sessions/${encodeURIComponent(id)}/fork`, { method: 'POST' }),

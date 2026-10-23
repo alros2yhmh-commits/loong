@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { unifiedDiff } from '../server/diff.ts'
 import { compactHistory } from '../server/context.ts'
 import { readProjectRules, projectRulesBlock } from '../server/rules.ts'
+import { skillsBlock, skillIndexBlock } from '../server/skills.ts'
 import { setWorkspace } from '../server/config.ts'
 import type { HistoryTurn } from '../server/agent.ts'
 
@@ -182,10 +183,13 @@ test('skills are read from the open Agent Skills layout and injected', () => {
       ['---', 'name: release', 'description: how to ship', '---', '', '1. build', '2. tag'].join('\n'),
     )
     setWorkspace(ws)
-    const block = projectRulesBlock()
-    assert.match(block, /SKILLS/)
-    assert.match(block, /release: how to ship/)
+    /* rules are rules; skills live in skills.ts now — the body arrives when the
+       message matches the triggers, and the index always names it */
+    const block = skillsBlock('how do I release this?')
+    assert.match(block, /release/)
     assert.match(block, /1\. build/)
+    assert.match(skillIndexBlock(), /release/)
+    assert.doesNotMatch(projectRulesBlock(), /1\. build/)
   } finally {
     setWorkspace(originalWorkspace)
     rmSync(ws, { recursive: true, force: true })

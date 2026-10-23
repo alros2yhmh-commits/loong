@@ -39,6 +39,8 @@ import {
 } from './db.ts'
 import { loadBlocks, saveBlocks, deleteBlocks } from './threads.ts'
 import { loadCatalog, modelsOf } from './catalog.ts'
+import { INTEGRATIONS, configuredIntegrations, connectIntegration, disconnectIntegration } from './integrations.ts'
+import { ackTimer, addTimer, cancelTimer, fireDue, listTimers, parseDelay, pendingTimers } from './timers.ts'
 import type { ProviderId } from './providers.ts'
 import { pendingApprovals, resolveApproval, pendingQuestions, resolveQuestion } from './approvals.ts'
 
@@ -272,6 +274,55 @@ app.delete('/api/sessions/:id', (c) => {
   deleteBlocks(c.req.param('id'))
   return c.json({ ok: true })
 })
+
+/* ---- integrations: a gallery, not a JSON form --------------------------- */
+
+app.get('/api/integrations', (c) =>
+  c.json({ integrations: INTEGRATIONS, configured: configuredIntegrations() }),
+)
+
+app.post('/api/integrations/:id', async (c) => {
+  const body = await c.req.json().catch(() => ({}))
+  const result = connectIntegration(c.req.param('id'), body?.values)
+  return result.ok ? c.json(result) : c.json(result, 400)
+})
+
+app.delete('/api/integrations/:id', (c) =>
+  c.json(disconnectIntegration(c.req.param('id'))),
+)
+
+/* ---- timers ------------------------------------------------------------- */
+
+app.get('/api/timers', (c) =>
+  c.json({ timers: listTimers(), pending: pendingTimers() }),
+)
+
+app.post('/api/timers', async (c) => {
+  const body = await c.req.json().catch(() => ({}))
+  const afterMs = typeof body.afterMs === 'number' ? body.afterMs : parseDelay(String(body.after ?? ''))
+  if (!afterMs) return c.json({ error: 'say when: 3m, 90s, 2h' }, 400)
+  const timer = addTimer({ afterMs, prompt: String(body.prompt ?? ''), title: body.title })
+  if ('error' in timer) return c.json(timer, 400)
+  return c.json({ timer }, 201)
+})
+
+app.delete('/api/timers/:id', (c) =>
+  c.json({ ok: cancelTimer(c.req.param('id')) }),
+)
+
+app.post('/api/timers/:id/ack', (c) => {
+  ackTimer(c.req.param('id'))
+  return c.json({ ok: true })
+})
+
+/* the tick: a timer that came due while the app was open fires here */
+setInterval(() => {
+  try {
+    fireDue()
+  } catch {
+    /* a broken timer file must not take the agent down */
+  }
+}, 10_000).unref?.()
 
 /* ---- thread snapshots: the run itself, not just the conversation --------- */
 

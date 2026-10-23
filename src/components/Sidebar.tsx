@@ -36,6 +36,7 @@ export function Sidebar({
   onRename,
   onDelete,
   onFork,
+  runningAgents = 0,
 }: {
   sessions: Session[]
   activeId: string | null
@@ -55,6 +56,8 @@ export function Sidebar({
   onDelete: (id: string) => void
   /** copy a thread — its words and its run — under a new id */
   onFork: (id: string) => void
+  /** how many child agents are working right now — visible from anywhere */
+  runningAgents?: number
 }) {
   const [query, setQuery] = useState('')
   /* projects fold. A workspace with forty threads is a wall otherwise. */
@@ -256,6 +259,25 @@ export function Sidebar({
           </div>
         ))}
       </div>
+
+      {/* work happening in the background must be visible from here, not only
+          in the thread it belongs to */}
+      {runningAgents > 0 && (
+        <div
+          className="mx-[10px] mb-[6px] flex items-center gap-[7px] rounded-[7px] px-[9px] py-[5px]"
+          style={{ border: '1px solid var(--line-2)', background: 'var(--surface-sunken)' }}
+        >
+          <motion.span
+            className="block h-[5px] w-[5px] rounded-full"
+            style={{ background: 'var(--text-2)' }}
+            animate={{ opacity: [0.3, 1, 0.3] }}
+            transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
+          />
+          <span className="mono text-[10.5px]" style={{ color: 'var(--text-3)' }}>
+            {runningAgents} {runningAgents === 1 ? 'agent' : 'agents'} working
+          </span>
+        </div>
+      )}
 
       {/* the way out: settings, sound, theme */}
       <footer

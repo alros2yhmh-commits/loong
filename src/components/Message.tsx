@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { memo, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import type { Block } from '../lib/blocks'
 import type { ApprovalDecision } from '../lib/contract'
 import { dur, easeOut, enterBlock } from '../motion/tokens'
@@ -269,26 +269,54 @@ export const BlockView = memo(function BlockView({ block, onDecide, onAnswer, re
     case 'subagent':
       return (
         <motion.div {...enterBlock}>
-          {/* a child agent: one card, open while it reads, settled when its
-              findings land on the parent turn */}
+          {/* A child agent is work happening in parallel — it must LOOK like
+              work: a breathing dot, a clock that moves, and a border that
+              settles when it reports. A silent card reads as decoration. */}
           <div
-            className="rounded-[9px] px-[13px] py-[10px]"
+            className="relative overflow-hidden rounded-[9px] px-[13px] py-[10px]"
             style={{
               border: `1px solid ${block.phase === 'start' ? 'var(--line-4)' : 'var(--line-2)'}`,
               background: 'var(--surface-sunken)',
             }}
           >
-            <div className="flex items-center gap-[8px]">
-              <span
-                className="mono text-[10.5px]"
-                style={{ color: 'var(--text-4)' }}
-              >
+            {block.phase === 'start' && (
+              <motion.span
+                aria-hidden
+                className="pointer-events-none absolute inset-0"
+                style={{
+                  background:
+                    'linear-gradient(90deg, transparent, rgba(255,255,255,0.045), transparent)',
+                }}
+                initial={{ x: '-100%' }}
+                animate={{ x: '100%' }}
+                transition={{ duration: 1.6, repeat: Infinity, ease: 'linear' }}
+              />
+            )}
+            <div className="relative flex items-center gap-[8px]">
+              <motion.span
+                className="block h-[5px] w-[5px] shrink-0 rounded-full"
+                style={{
+                  background: block.phase === 'start' ? 'var(--text-2)' : 'var(--text-4)',
+                }}
+                animate={
+                  block.phase === 'start' ? { opacity: [0.3, 1, 0.3] } : { opacity: 1 }
+                }
+                transition={
+                  block.phase === 'start'
+                    ? { duration: 1.4, repeat: Infinity, ease: 'easeInOut' }
+                    : { duration: 0.2 }
+                }
+              />
+              <span className="mono text-[10.5px]" style={{ color: 'var(--text-3)' }}>
                 subagent · {block.scope === 'research' ? 'web' : 'codebase'}
               </span>
               {block.phase === 'start' ? (
-                <span className="mono text-[10.5px]" style={{ color: 'var(--text-3)' }}>
-                  reading…
-                </span>
+                <>
+                  <span className="mono text-[10.5px]" style={{ color: 'var(--text-3)' }}>
+                    working
+                  </span>
+                  <SubagentClock since={block.at} />
+                </>
               ) : (
                 <span className="mono text-[10.5px]" style={{ color: 'var(--text-4)' }}>
                   reported
@@ -296,7 +324,7 @@ export const BlockView = memo(function BlockView({ block, onDecide, onAnswer, re
               )}
             </div>
             <p
-              className="mono mt-[6px] mb-0 text-[11.5px] leading-[1.55]"
+              className="mono relative mt-[6px] mb-0 text-[11.5px] leading-[1.55]"
               style={{ color: 'var(--text-2)' }}
             >
               {block.task}
@@ -360,3 +388,28 @@ export const BlockView = memo(function BlockView({ block, onDecide, onAnswer, re
       )
   }
 })
+
+/**
+ * The clock on a running subagent.
+ *
+ * A child agent can work for a minute and the card said "reading…" the whole
+ * time — indistinguishable from a hang. A number that moves is the cheapest
+ * proof that something is alive.
+ */
+function SubagentClock({ since }: { since: number }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(t)
+  }, [])
+  const seconds = Math.max(0, Math.round((now - since) / 1000))
+  const text =
+    seconds < 60
+      ? `0:${String(seconds).padStart(2, '0')}`
+      : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+  return (
+    <span className="mono text-[10.5px] tabular-nums" style={{ color: 'var(--text-4)' }}>
+      {text}
+    </span>
+  )
+}

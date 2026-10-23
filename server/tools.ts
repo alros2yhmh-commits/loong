@@ -7,6 +7,9 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import type { Dirent } from 'node:fs'
 import { lookup } from 'node:dns/promises'
 import { searchHistory } from './history.ts'
+import { addTimer, parseDelay } from './timers.ts'
+import { learnSkill } from './skills.ts'
+import { listTopics, readTopic, searchTopics } from './library.ts'
 import { dirname, join, relative } from 'node:path'
 import {
   FETCH_TIMEOUT_MS,
@@ -1454,6 +1457,85 @@ export const pastSessionsTool = tool({
   },
 })
 
+/** set a timer — "do this in three minutes" is a real request */
+export const scheduleTool = tool({
+  description:
+    'Set a timer that starts a NEW thread with this prompt when it comes due. Use it when the user says "in N minutes", "in an hour", "tonight", or asks you to come back to something. The timer survives closing the app: it fires the moment Loong is open again. Say the time you set, in the words the user used.',
+  inputSchema: z.object({
+    after: z.string().describe('How long from now: 3m, 90s, 2h, 1h30m.'),
+    prompt: z.string().describe('What to do when it fires, written as a message to yourself — the whole task, not a reference to this conversation.'),
+    title: z.string().optional().describe('A short name for the thread it will create.'),
+  }),
+  execute: async ({ after, prompt, title }) => {
+    const ms = parseDelay(after)
+    if (!ms) return `${after} is not a delay. Say 3m, 90s, 2h or 1h30m.`
+    const timer = addTimer({ afterMs: ms, prompt, title })
+    if ('error' in timer) return timer.error
+    const at = new Date(timer.at).toLocaleString('en-GB', {
+      weekday: 'short', hour: '2-digit', minute: '2-digit',
+    })
+    return `Timer set for ${at} (${after} from now). It will start a thread called "${timer.title}" with that prompt.`
+  },
+})
+
+/** the agent writing a skill for itself — the part that compounds */
+export const learnSkillTool = tool({
+  description:
+    'Save what you worked out as a SKILL for this project: the steps, the commands, the gotchas — the thing you would otherwise have to rediscover next session. Write the body as instructions to a future you (imperative, concrete, with the real commands). Use it after solving something non-obvious, or when the user says "remember how we did this".',
+  inputSchema: z.object({
+    name: z.string().describe('A short name: "release-checklist", "fix-windows-build".'),
+    description: z.string().describe('One line: what this skill is for, and the words that should trigger it.'),
+    body: z.string().describe('The playbook itself — steps, commands, what to watch for.'),
+    triggers: z.string().optional().describe('Comma-separated trigger words, if the description is not enough.'),
+  }),
+  execute: async ({ name, description, body, triggers }) => {
+    const result = learnSkill({ name, description, body, triggers })
+    return result.ok
+      ? `Saved the skill "${name}" — it loads automatically next time the message matches it.`
+      : `Could not save the skill: ${result.error}`
+  },
+})
+
+/** the exact time — the prompt carries it, this is the second opinion */
+export const nowTool = tool({
+  description:
+    'The current date and time, with the timezone. Use it before computing any deadline or delay; never guess.',
+  inputSchema: z.object({}),
+  execute: async () => {
+    const at = new Date()
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+    const offset = -at.getTimezoneOffset() / 60
+    return `${at.toLocaleString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })} (${tz}, UTC${offset >= 0 ? '+' : ''}${offset})`
+  },
+})
+
+/** the library, on demand — depth without carrying it in every prompt */
+export const readLibraryTool = tool({
+  description:
+    'Open a topic from the library: real, specific guidance on git, sql, docker, http, testing, security, react, shell. Call it when the task needs the details (a command, a status code, a gotcha) and guessing would be worse than reading. The ids are listed in your prompt under LIBRARY.',
+  inputSchema: z.object({
+    topic: z.string().describe('A topic id from the LIBRARY list: git, sql, docker, http, testing, security, react, shell.'),
+  }),
+  execute: async ({ topic }) => {
+    const found = readTopic(topic)
+    if (!found) return `No library topic matches "${topic}". Try one of: ${listTopics().map((t) => t.id).join(', ')}.`
+    return `# ${found.title}\n\n${found.body}`
+  },
+})
+
+/** find the right topic when the id is not obvious */
+export const librarySearchTool = tool({
+  description: 'Search the library by words — returns the topics that match and the line that matched.',
+  inputSchema: z.object({
+    query: z.string().describe('What you are trying to do: "undo a pushed commit", "docker image too big".'),
+  }),
+  execute: async ({ query }) => {
+    const hits = searchTopics(query)
+    if (hits.length === 0) return `Nothing in the library matches "${query}".`
+    return hits.map((h) => `- ${h.topic.id} (${h.topic.title}): ${h.snippet}`).join('\n')
+  },
+})
+
 export const TOOLS = {
   list_dir: listDir,
   read_file: readFileTool,
@@ -1483,6 +1565,11 @@ export const TOOLS = {
   remember: rememberTool,
   recall: recallTool,
   past_sessions: pastSessionsTool,
+  schedule: scheduleTool,
+  learn_skill: learnSkillTool,
+  now: nowTool,
+  read_library: readLibraryTool,
+  library_search: librarySearchTool,
   forget: forgetTool,
 }
 
