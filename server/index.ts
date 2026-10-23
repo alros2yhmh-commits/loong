@@ -275,6 +275,75 @@ app.delete('/api/sessions/:id', (c) => {
   return c.json({ ok: true })
 })
 
+/* ---- the workspace, as a tree ------------------------------------------- */
+
+app.get('/api/tree', async (c) => {
+  const depth = Math.min(4, Math.max(1, Number(c.req.query('depth') ?? 2)))
+  try {
+    const root = getWorkspace()
+    const walk = async (dir: string, level: number): Promise<unknown[]> => {
+      if (level > depth) return []
+      const { readdir } = await import('node:fs/promises')
+      let entries: { name: string; isDirectory(): boolean }[] = []
+      try {
+        entries = await readdir(dir, { withFileTypes: true })
+      } catch {
+        return []
+      }
+      const out: unknown[] = []
+      for (const entry of entries.sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))) {
+        if (entry.name.startsWith('.') && entry.name !== '.loong') continue
+        if (['node_modules', 'dist', 'build', 'out', '.git', '__pycache__', '.venv'].includes(entry.name)) continue
+        const full = join(dir, entry.name)
+        out.push({
+          name: entry.name,
+          dir: entry.isDirectory(),
+          children: entry.isDirectory() ? await walk(full, level + 1) : undefined,
+        })
+        if (out.length >= 120) break
+      }
+      return out
+    }
+    return c.json({ root, tree: await walk(root, 1) })
+  } catch (e) {
+    return c.json({ root: '', tree: [], error: (e as Error).message })
+  }
+})
+
+/* ---- the agent's own inventory: skills, library, version ----------------- */
+
+app.get('/api/skills', async (c) => {
+  const { listSkills } = await import('./skills.ts')
+  return c.json({
+    skills: listSkills().map((s) => ({
+      name: s.name,
+      description: s.description,
+      triggers: s.triggers,
+      chars: s.body.length,
+      source: s.source,
+    })),
+  })
+})
+
+app.get('/api/skills/:name', async (c) => {
+  const { listSkills } = await import('./skills.ts')
+  const found = listSkills().find((s) => s.name.toLowerCase() === c.req.param('name').toLowerCase())
+  return found ? c.json(found) : c.json({ error: 'no such skill' }, 404)
+})
+
+app.get('/api/library', async (c) => {
+  const { listTopics } = await import('./library.ts')
+  return c.json({
+    topics: listTopics().map((t) => ({ id: t.id, title: t.title, summary: t.summary, chars: t.body.length })),
+  })
+})
+
+app.get('/api/library/:id', async (c) => {
+  const { readTopic } = await import('./library.ts')
+  const topic = readTopic(c.req.param('id'))
+  return topic ? c.json(topic) : c.json({ error: 'no such topic' }, 404)
+})
+
 /* ---- integrations: a gallery, not a JSON form --------------------------- */
 
 app.get('/api/integrations', (c) =>

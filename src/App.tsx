@@ -6,6 +6,8 @@ import { ArtifactsPanel, countArtifacts } from './components/ArtifactsPanel'
 import { Noise } from './components/Noise'
 import { Sidebar } from './components/Sidebar'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { downloadText, threadToMarkdown, transcriptText } from './lib/export-thread'
+import { FilesPanel } from './components/FilesPanel'
 import { Resizer } from './components/Resizer'
 import { RunBar } from './components/RunBar'
 import { RunStatus } from './components/RunStatus'
@@ -1153,6 +1155,44 @@ const [workspace, setWorkspace] = useState<string | null>(null)
         run: toggleSound,
       },
       {
+        id: 'new-timer',
+        group: 'Thread',
+        label: 'Schedule something for later…',
+        run: () => {
+          const when = window.prompt('When? (3m, 90s, 2h)', '10m')
+          if (!when) return
+          const what = window.prompt('What should Loong do then?')
+          if (!what) return
+          void api.createTimer({ after: when, prompt: what }).catch(() => {})
+        },
+      },
+      {
+        id: 'find-thread',
+        group: 'Thread',
+        label: 'Find a thread by name…',
+        run: () => {
+          const q = window.prompt('Thread name contains…')?.trim().toLowerCase()
+          if (!q) return
+          const hit = sessions.find((x) => x.title.toLowerCase().includes(q))
+          if (hit) void openThread(hit.id)
+        },
+      },
+      {
+        id: 'export-thread',
+        group: 'Thread',
+        label: 'Export this thread as Markdown',
+        run: () => {
+          const title = sessions.find((x) => x.id === activeId)?.title ?? 'thread'
+          downloadText(`${title.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.md`, threadToMarkdown(title, stream.blocks, { model: settings.model }))
+        },
+      },
+      {
+        id: 'copy-transcript',
+        group: 'Thread',
+        label: 'Copy the transcript',
+        run: () => void navigator.clipboard.writeText(transcriptText(stream.blocks)),
+      },
+      {
         id: 'reset-layout',
         group: 'Layout',
         label: 'Reset every panel to its default width',
@@ -1600,6 +1640,7 @@ const [workspace, setWorkspace] = useState<string | null>(null)
             pinned={drawer.pinned}
             onTogglePin={() => drawer.setPinned(!drawer.pinned)}
             artifacts={<ArtifactsPanel blocks={stream.blocks} />}
+            files={<FilesPanel />}
             artifactCount={artifactCount}
             agents={
               <AgentsPanel

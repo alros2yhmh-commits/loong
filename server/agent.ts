@@ -39,8 +39,9 @@ import { estimateConfidence } from './confidence.ts'
 import { acquireWriteLease } from './leases.ts'
 import { filesForRun } from './journal.ts'
 import { scanPaths, hasCritical } from './security-gate.ts'
-import { skillIndexBlock, skillsBlock } from './skills.ts'
+import { selectSkills, skillIndexBlock, skillsBlock } from './skills.ts'
 import { libraryIndexBlock } from './library.ts'
+import { briefBlock, compileBrief } from './brief.ts'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { clip, displayPath, getWorkspace, resolveInside } from './config.ts'
 import { unifiedDiff } from './diff.ts'
@@ -82,9 +83,30 @@ export interface HistoryTurn {
   toolResults?: { toolCallId: string; toolName: string; output: string; ok: boolean }[]
 }
 
-/** history in, provider prompt out — one pure function, no I/O, testable */
+/** the result a tool call gets when the run died before it returned.
+ *
+ *  A provider rejects a history that contains a tool call with no matching
+ *  result — and it is right to: the model would be reading its own request
+ *  with no answer. Closing a thread mid-tool is exactly how that history gets
+ *  built, and the run then fails with "Tool result is missing for tool call
+ *  X" — which reads as a Loong bug (it is) rather than what happened (the
+ *  thread was closed while the tool was running).
+ *
+ *  So the gap is closed honestly: the call is answered with the truth. */
+export const INTERRUPTED_RESULT =
+  'Interrupted before this tool returned — the thread was closed or the run was stopped. Nothing was recorded; re-run it if it still matters.'
+
 export function toModelMessages(history: HistoryTurn[]): ModelMessage[] {
   const out: ModelMessage[] = []
+  /* every call id that a later tool turn answers */
+  const answered = new Set<string>()
+  for (const turn of history) {
+    for (const r of turn.toolResults ?? []) if (r.toolCallId) answered.add(r.toolCallId)
+  }
+  /* calls that will never be answered get one synthetic result, at the end —
+     the provider wants the answer in a tool message after the call, and the
+     order of the answers does not matter, only their presence */
+  const orphans: { toolCallId: string; toolName: string }[] = []
 
   for (const turn of history) {
     if (turn.role === 'user') {
@@ -121,6 +143,9 @@ export function toModelMessages(history: HistoryTurn[]): ModelMessage[] {
           input: call.input ?? {},
           ...(call.providerOptions ? { providerOptions: call.providerOptions } : {}),
         })
+        if (call.toolCallId && !answered.has(call.toolCallId)) {
+          orphans.push({ toolCallId: call.toolCallId, toolName: call.toolName })
+        }
       }
       if (parts.length > 0) {
         out.push({ role: 'assistant', content: parts } as unknown as ModelMessage)
@@ -144,6 +169,19 @@ export function toModelMessages(history: HistoryTurn[]): ModelMessage[] {
         content: results,
       } as unknown as ModelMessage)
     }
+  }
+
+  if (orphans.length > 0) {
+    out.push({
+      role: 'tool',
+      content: orphans.map((o) => ({
+        type: 'tool-result',
+        toolCallId: o.toolCallId,
+        toolName: o.toolName,
+        output: { type: 'text', value: INTERRUPTED_RESULT },
+        isError: true,
+      })),
+    } as unknown as ModelMessage)
   }
 
   return out
@@ -202,9 +240,17 @@ Reply in the language the user writes in. An Arabic message gets an Arabic
 answer, with English file names, identifiers and commands left exactly as they
 are. Never translate code, paths or tool names.
 
-You have real tools and they really run. Read before you write: use list_dir and read_file
-to establish what is actually there rather than assuming. Use grep to find where things are
-defined or used. Use web_search when you need a library API, a current version, or a fact
+You have real tools and they really run. Read before you write: use list_dir and read_many
+to establish what is actually there rather than assuming. Use search_many to find where things
+are defined or used.
+
+BATCH — one request carries the whole conversation, so a loop of read_file pays
+the history N times. Use read_many(paths) for many files (mode:/outline/ first on a
+file you have not seen), search_many(queries), edit_many(edits). The single-file tools
+are for the one file you actually need.
+
+BEFORE YOU FINISH: did I do what the brief asked; what did I claim without checking;
+what did I leave behind. A "done" with no evidence is a turn the reader must re-check. Use web_search when you need a library API, a current version, or a fact
 you do not have — never state a version or an API from memory when you can check it.
 
 Tools that write or execute need the user's approval. When you call one, the run pauses and
@@ -271,7 +317,7 @@ TOOLS, and when to use each:
   context: exploring unfamiliar code, checking how something is used across many
   files. It returns one summary. Use it when the reading is large — never for
   the writing, that stays with you.
-- list_dir, read_file, read_document, grep — read the workspace (and PDFs or
+- list_dir, read_many, read_file, read_document, search_many, grep — read the workspace (and PDFs or
   Office documents with read_document). Do these before any write.
 - library_docs   — the CURRENT docs for any library, by name. Use it before
   writing code against a library you are not certain about; your memory of an
@@ -720,10 +766,25 @@ export async function runAgent(opts: RunOptions): Promise<void> {
       ...base(runId, threadId),
     } as BaseEvent)
 
-  /* the task text drives skill selection: only the relevant expertise is
-     injected, so the prompt stays small */
+  /* the request, compiled — and shown: the reader should be able to see what
+     the run understood before it starts working. One line, not a form. */
   const taskText =
     [...opts.messages].reverse().find((m) => m.role === 'user')?.content ?? ''
+  if (taskText.trim()) {
+    const picked = selectSkills(taskText)
+    if (picked.length > 0) {
+      emitNotice(`skill: ${picked.map((s) => s.name).join(' + ')}`)
+    }
+    const brief = compileBrief(taskText)
+    /* a trivial ask gets no ceremony: a notice above every "thanks" is noise */
+    if (brief.complexity === 'medium' || brief.complexity === 'large') {
+      emitNotice(
+        `understood: ${brief.intent} · ${brief.complexity}${
+          brief.steps.length ? ` · ${brief.steps.length} steps` : ''
+        }${brief.wantsResearch ? ' · research' : ''}`,
+      )
+    }
+  }
 
   /* the same call, with the same arguments, more than a few times, is a model
      flailing — and every repeat costs a full context of tokens. Stop it. */
@@ -1301,7 +1362,10 @@ export async function runAgent(opts: RunOptions): Promise<void> {
           model,
           system:
             systemPrompt(mode, { sessionHooks, userName: opts.userName }) +
-            skillsBlock(taskText),
+            skillsBlock(taskText) +
+            /* the request, compiled: objective, deliverable, constraints, proof.
+               Deterministic, so it costs nothing and cannot drift. */
+            briefBlock(compileBrief(taskText)),
           messages: history?.length
             ? toModelMessages(compactHistory(history))
             : opts.messages.map((m) => ({ role: m.role, content: m.content })),

@@ -10,6 +10,7 @@ import { searchHistory } from './history.ts'
 import { addTimer, parseDelay } from './timers.ts'
 import { learnSkill } from './skills.ts'
 import { listTopics, readTopic, searchTopics } from './library.ts'
+import { editManyTool, readManyTool, searchManyTool } from './tools-batch.ts'
 import { dirname, join, relative } from 'node:path'
 import {
   FETCH_TIMEOUT_MS,
@@ -1539,6 +1540,9 @@ export const librarySearchTool = tool({
 export const TOOLS = {
   list_dir: listDir,
   read_file: readFileTool,
+  read_many: readManyTool,
+  search_many: searchManyTool,
+  edit_many: editManyTool,
   read_image: readImageTool,
   read_document: readDocumentTool,
   library_docs: libraryDocsTool,

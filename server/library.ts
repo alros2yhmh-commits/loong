@@ -343,7 +343,8 @@ export function listTopics(): Topic[] {
 export function libraryIndexBlock(): string {
   const topics = listTopics()
   if (topics.length === 0) return ''
-  const lines = topics.map((t) => `- ${t.id}: ${t.summary || t.title}`)
+  /* three words each: the index is a shelf label, the body is the book */
+  const lines = topics.map((t) => `- ${t.id}: ${(t.summary || t.title).split(/[,;]/).slice(0, 3).join(',')}`)
   return `\n\nLIBRARY — depth on demand. Call read_library with one of these ids when the task needs the details; do not guess at them.\n${lines.join('\n')}`
 }
 

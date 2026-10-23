@@ -231,7 +231,7 @@ export function skillsBlock(text: string, cap = 3200): string {
 export function skillIndexBlock(): string {
   const all = listSkills()
   if (all.length === 0) return ''
-  const lines = all.map((s) => `- ${s.name}: ${s.description}`)
+  const lines = all.map((s) => `- ${s.name}: ${s.description.split(/[.?!]/)[0].slice(0, 90)}`)
   return `\n\nSKILLS AVAILABLE — playbooks that load automatically when the message matches their triggers. Read a skill's folder (references/, scripts/) with read_file when you need more than the body.\n${lines.join('\n')}`
 }
 

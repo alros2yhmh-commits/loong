@@ -10,6 +10,8 @@ import { dur, easeOut, spring } from '../motion/tokens'
 import { IconChevron } from './Icons'
 import { McpPanel } from './McpPanel'
 import { IntegrationsPanel } from './IntegrationsPanel'
+import { SkillsPanel, LibraryPanel } from './InventoryPanel'
+import { TimersPanel } from './TimersPanel'
 import { AnalyticsPanel } from './AnalyticsPanel'
 
 /* ---------------------------------------------------------------------------
@@ -152,6 +154,10 @@ export function Settings({
                 ['provider', 'Model'],
                 ['memory', 'Memory'],
                 ['autonomy', 'Autonomy'],
+                ['skills', 'Skills'],
+                ['library', 'Library'],
+                ['timers', 'Timers'],
+                ['about', 'About'],
                 ['integrations', 'Integrations'],
                 ['mcp', 'MCP'],
                 ['appearance', 'Look'],
@@ -671,6 +677,50 @@ export function Settings({
                   >
                     Restore defaults
                   </button>
+                </Row>
+              </Section>
+
+              <Section
+                id="skills"
+                title="Skills"
+                note="Playbooks that load when a message matches their triggers. The agent writes its own with learn_skill; these are the ones it has now."
+              >
+                <SkillsPanel />
+              </Section>
+
+              <Section
+                id="library"
+                title="Library"
+                note="Depth the agent reads on demand — git, sql, docker, http, testing, security, react, shell. The index is in its prompt; the body is not, until it asks."
+              >
+                <LibraryPanel />
+              </Section>
+
+              <Section
+                id="timers"
+                title="Timers"
+                note="Scheduled work. A timer survives closing the app and starts a new thread when it comes due."
+              >
+                <TimersPanel />
+              </Section>
+
+              <Section
+                id="about"
+                title="About"
+                note="Loong 1.0.0 — a local agent that reads before it writes, batches its tool calls, and keeps its own playbooks."
+              >
+                <Row label="Version">
+                  <span className="mono text-[11.5px]" style={{ color: 'var(--text-2)' }}>
+                    1.0.0
+                  </span>
+                </Row>
+                <Row label="What is new">
+                  <span className="text-[11.5px] leading-[1.6]" style={{ color: 'var(--text-3)' }}>
+                    Batched tools (read_many / search_many / edit_many), a compiled brief for every
+                    request, timers that survive a restart, a model catalogue for every provider,
+                    skills the agent writes itself, a library read on demand, and an integrations
+                    gallery.
+                  </span>
                 </Row>
               </Section>
 

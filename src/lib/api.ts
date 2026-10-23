@@ -202,6 +202,22 @@ export const api = {
       }
     }>('/api/traces'),
   sessions: () => json<{ sessions: ServerSession[] }>('/api/sessions'),
+  /** the workspace tree, read-only */
+  tree: (depth = 2) =>
+    json<{ root: string; tree: { name: string; dir: boolean; children?: unknown[] }[]; error?: string }>(
+      `/api/tree?depth=${depth}`,
+    ),
+  /** the agent's inventory — what it can reach without asking */
+  skills: () =>
+    json<{
+      skills: { name: string; description: string; triggers: string[]; chars: number; source: string }[]
+    }>('/api/skills'),
+  skill: (name: string) =>
+    json<{ name: string; description: string; body: string }>(`/api/skills/${encodeURIComponent(name)}`),
+  libraryTopics: () =>
+    json<{ topics: { id: string; title: string; summary: string; chars: number }[] }>('/api/library'),
+  libraryTopic: (id: string) =>
+    json<{ id: string; title: string; summary: string; body: string }>(`/api/library/${encodeURIComponent(id)}`),
   /** timers: what is scheduled, and what fired while the app was away */
   timers: () =>
     json<{

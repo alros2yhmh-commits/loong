@@ -59,3 +59,40 @@ test('the clock, the timers, the library and a skill the agent writes itself', a
   assert.match(skillsBlock('time to release this'), /1\. npm test/)
   assert.equal(skillsBlock('paint the header blue'), '')
 })
+
+test('a thread closed mid-tool leaves a history the provider accepts', async () => {
+  const { toModelMessages, INTERRUPTED_RESULT } = await import('../server/agent.ts')
+  /* exactly what a closed thread looks like: the call was recorded, the result
+     never came — the next run used to die with "Tool result is missing" */
+  const history = [
+    { role: 'user' as const, content: 'check the build' },
+    {
+      role: 'assistant' as const,
+      content: '',
+      toolCalls: [
+        { toolCallId: 'call_1', toolName: 'shell', input: { cmd: 'npm test' } },
+        { toolCallId: 'call_2', toolName: 'read_file', input: { path: 'a.ts' } },
+      ],
+    },
+    /* results arrive in their own tool turn — the shape the SDK expects */
+    {
+      role: 'tool' as const,
+      content: '',
+      toolResults: [{ toolCallId: 'call_1', toolName: 'shell', output: 'ok', ok: true }],
+    },
+  ]
+  const messages = toModelMessages(history)
+  const toolMessages = messages.filter((m) => m.role === 'tool')
+  const ids = new Set<string>()
+  for (const m of toolMessages) {
+    for (const part of m.content as { toolCallId?: string }[]) {
+      if (part.toolCallId) ids.add(part.toolCallId)
+    }
+  }
+  assert.ok(ids.has('call_1'), 'the real result survives')
+  assert.ok(ids.has('call_2'), 'the orphan is answered')
+  const orphan = (toolMessages.at(-1)!.content as { output?: { value?: string } }[]).find(
+    (p) => (p as { toolCallId?: string }).toolCallId === 'call_2',
+  )
+  assert.equal(orphan?.output?.value, INTERRUPTED_RESULT)
+})

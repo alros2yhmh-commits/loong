@@ -167,7 +167,9 @@ export function memoryBlock(limit = 16): string {
   const entries = memoryForPrompt(limit)
   if (entries.length === 0) return ''
   const lines = entries.map((e) => `- ${clip(e.text, 240)}`)
-  const body = clip(lines.join('\n'), 3_000)
+  /* 2k, not 3k: memory is context, not instructions, and it grows without a
+     ceiling if nobody sets one — every fact costs the prompt on every request */
+  const body = clip(lines.join('\n'), 2_000)
   return `
 
 DURABLE MEMORY — facts you saved in earlier sessions (newest first). They are true unless the

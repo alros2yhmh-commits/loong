@@ -27,6 +27,8 @@ interface ThreadDrawerProps {
   agentCount?: number
   /** the repository review tab's content — omitted means no tab */
   review?: React.ReactNode
+  /** the workspace tree — omitted means no tab */
+  files?: React.ReactNode
 }
 
 export function ThreadDrawer({
@@ -38,11 +40,13 @@ export function ThreadDrawer({
   agents,
   agentCount = 0,
   review,
+  files,
 }: ThreadDrawerProps) {
   /* threads live in the sidebar now — this drawer is only what a thread produces */
-  const [tab, setTab] = useState<'artifacts' | 'agents' | 'review'>('artifacts')
-  const tabs: { id: 'artifacts' | 'agents' | 'review'; label: string }[] = []
+  const [tab, setTab] = useState<'artifacts' | 'agents' | 'review' | 'files'>('artifacts')
+  const tabs: { id: 'artifacts' | 'agents' | 'review' | 'files'; label: string }[] = []
   if (artifacts) tabs.push({ id: 'artifacts', label: 'Outputs' })
+  if (files) tabs.push({ id: 'files', label: 'Files' })
   if (agents) tabs.push({ id: 'agents', label: 'Agents' })
   if (review) tabs.push({ id: 'review', label: 'Review' })
 
@@ -79,7 +83,7 @@ export function ThreadDrawer({
             <header className="flex items-center justify-between px-[14px] pt-[13px] pb-[8px]">
               <div className="flex items-baseline gap-[8px]">
                 <h2 className="text-[13px]" style={{ color: 'var(--text-1)' }}>
-                  {tab === 'artifacts' ? 'Artifacts' : tab === 'agents' ? 'Agents' : 'Review'}
+                  {tab === 'artifacts' ? 'Artifacts' : tab === 'agents' ? 'Agents' : tab === 'files' ? 'Files' : 'Review'}
                 </h2>
                 <span
                   className="mono text-[11px]"

@@ -59,10 +59,13 @@ test('an image rejection is retried once without the image, and explained once',
 
   assert.equal(calls, 2, 'one corrected retry, not a loop')
 
+  /* the notices ABOUT THE IMAGE — a run may also say which skill it picked up,
+     and that is a different sentence, not a repeat of this one */
   const notices = events.filter(
     (e) =>
       e.type === EventType.CUSTOM &&
-      (e as unknown as { name?: string }).name === 'loong.notice',
+      (e as unknown as { name?: string }).name === 'loong.notice' &&
+      /image/i.test(JSON.stringify((e as unknown as { value?: unknown }).value ?? '')),
   )
   assert.equal(notices.length, 1, 'the reader is told once, not three times')
   assert.match(
