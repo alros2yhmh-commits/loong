@@ -170,7 +170,10 @@ const DEFAULTS: Settings = {
      A slow agent that works beats a fast one that does nothing. */
   model: 'qwen3:8b',
   baseUrl: '',
-  theme: 'dark',
+  /* the default is the light look: a white canvas with black engraving, the
+     one the window is remembered by. Dark is the same ramp read backwards
+     and lives one click away in Appearance. */
+  theme: 'light',
   soundEnabled: false,
   volume: 0.7,
   motion: 'system',
@@ -188,14 +191,26 @@ const DEFAULTS: Settings = {
   decisionModel: '',
 }
 
-const KEY = 'loong.settings.v1'
+
+/* a one-time migration, keyed on the storage version.
+   Settings written by the previous build say "dark" because that was the only
+   look there was — it is a default, not a choice. The stamp separates the two:
+   a reader who PICKED dark in the new build is never overridden, but a profile
+   from before the choice existed starts on the light look. */
+const KEY = 'loong.settings.v2'
+const LEGACY_KEY = 'loong.settings.v1'
 
 function load(): Settings {
   if (typeof window === 'undefined') return DEFAULTS
   try {
     const raw = window.localStorage.getItem(KEY)
-    if (!raw) return DEFAULTS
-    return { ...DEFAULTS, ...(JSON.parse(raw) as Partial<Settings>) }
+    if (raw) return { ...DEFAULTS, ...(JSON.parse(raw) as Partial<Settings>) }
+    const legacy = window.localStorage.getItem(LEGACY_KEY)
+    if (legacy) {
+      /* the old theme was the only option; the rest of the settings are theirs */
+      return { ...DEFAULTS, ...(JSON.parse(legacy) as Partial<Settings>), theme: DEFAULTS.theme }
+    }
+    return DEFAULTS
   } catch {
     return DEFAULTS
   }

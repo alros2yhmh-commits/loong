@@ -127,15 +127,7 @@ export const BlockView = memo(function BlockView({ block, onDecide, onAnswer, re
     case 'user':
       return (
         <motion.div {...enterBlock}>
-          <div
-            className="rounded-[9px] py-[11px] pr-[13px] pl-[11px]"
-            style={{
-              /* the reader's voice is a block with an edge; the agent's is the
-                 page itself. That is the separation the old cards never had. */
-              borderLeft: '2px solid var(--line-5)',
-              background: 'var(--surface-raised)',
-            }}
-          >
+          <div className="py-[2px] pl-[2px]">
             <div className="flex items-center justify-between">
               <Eyebrow>You</Eyebrow>
               {/* a run that changed files is undoable — the button sits on the
@@ -189,7 +181,7 @@ export const BlockView = memo(function BlockView({ block, onDecide, onAnswer, re
           {/* the agent's voice is the page, not a card. A card made the answer
               compete with the tool log for the same visual weight. */}
           <div className="py-[2px] pl-[2px]">
-            <Eyebrow>Loong</Eyebrow>
+            <Eyebrow>{block.live ? 'Loong · working' : 'Loong'}</Eyebrow>
             <div className="text-[1em] leading-[1.68]">
               {block.live ? (
                 <>

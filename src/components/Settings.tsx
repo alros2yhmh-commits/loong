@@ -142,42 +142,38 @@ export function Settings({
 
             <div className="rule-engraved" />
 
-            {/* one row of jumps — eleven sections in a scroll is a maze, and a
-                person who came for the model should not pass the sounds to
-                reach it */}
+            {/* grouped jumps, not one long row: the everyday settings are
+                reachable in one glance, the exotic ones are still reachable */}
             <nav
-              className="flex flex-wrap items-center gap-[4px] px-[18px] py-[8px]"
+              className="flex flex-wrap items-center gap-x-[10px] gap-y-[5px] px-[18px] py-[8px]"
               style={{ borderBottom: '1px solid var(--line-1)' }}
             >
+              {/* grouped by the reader's mental model, not by which module
+                  owns the setting. A wall of sixteen chips made every screen
+                  equally far away; four groups make the everyday ones close. */}
               {[
-                ['runtime', 'Runtime'],
-                ['provider', 'Model'],
-                ['memory', 'Memory'],
-                ['autonomy', 'Autonomy'],
-                ['skills', 'Skills'],
-                ['library', 'Library'],
-                ['timers', 'Timers'],
-                ['about', 'About'],
-                ['integrations', 'Integrations'],
-                ['mcp', 'MCP'],
-                ['appearance', 'Look'],
-                ['sound', 'Sound'],
-                ['motion', 'Motion'],
-                ['layout', 'Layout'],
-                ['commands', 'Commands'],
-                ['analytics', 'Analytics'],
-              ].map(([id, label]) => (
-                <button
-                  key={id}
-                  type="button"
-                  className="ctl mono rounded-[5px] px-[7px] py-[3px] text-[10.5px]"
-                  style={{ border: '1px solid var(--line-2)', color: 'var(--text-3)' }}
-                  onClick={() => {
-                    document.getElementById(id)?.scrollIntoView({ block: 'start' })
-                  }}
-                >
-                  {label}
-                </button>
+                ['Everyday', [['appearance', 'Look'], ['sound', 'Sound'], ['motion', 'Motion']]],
+                ['Model', [['runtime', 'Runtime'], ['provider', 'Model'], ['router', 'Router']]],
+                ['Agent', [['memory', 'Memory'], ['skills', 'Skills'], ['library', 'Library'], ['timers', 'Timers']]],
+                ['Power', [['integrations', 'Integrations'], ['mcp', 'MCP'], ['autonomy', 'Autonomy'], ['commands', 'Commands']]],
+                ['Desk', [['layout', 'Layout'], ['analytics', 'Analytics'], ['about', 'About']]],
+              ].map(([group, items]) => (
+                <div key={group as string} className="flex items-center gap-[5px]">
+                  <span className="mono text-[10px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-4)' }}>
+                    {group as string}
+                  </span>
+                  {(items as [string, string][]).map(([id, label]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className="ctl rounded-[5px] px-[7px] py-[3px] text-[10.5px]"
+                      style={{ border: '1px solid var(--line-2)', color: 'var(--text-3)' }}
+                      onClick={() => document.getElementById(id)?.scrollIntoView({ block: 'start' })}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               ))}
             </nav>
 
@@ -552,8 +548,21 @@ export function Settings({
               <Section
                 id="appearance"
                 title="Appearance"
-                note="One warm monochrome ramp — Claude Desktop's grade with Loong's engraving. One look, no accent colour to configure."
+                note="One warm monochrome ramp, read in either direction: white canvas with black engraving, or black canvas with white. Same twelve steps, same hairlines, no accent colour to configure."
               >
+                <Row label="Theme">
+                  <div className="flex gap-[5px]">
+                    <Chip
+                      active={settings.theme === 'light'}
+                      onClick={() => set('theme', 'light')}
+                    >
+                      Light
+                    </Chip>
+                    <Chip active={settings.theme === 'dark'} onClick={() => set('theme', 'dark')}>
+                      Dark
+                    </Chip>
+                  </div>
+                </Row>
                 <Row label="Thread text">
                   <Slider
                     value={settings.threadFontSize}

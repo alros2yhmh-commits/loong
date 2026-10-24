@@ -59,16 +59,12 @@ export function Sidebar({
   /** how many child agents are working right now — visible from anywhere */
   runningAgents?: number
 }) {
-  const [query, setQuery] = useState('')
   /* projects fold. A workspace with forty threads is a wall otherwise. */
   const [folded, setFolded] = useState<Set<string>>(new Set())
 
   const groups = useMemo(() => {
     const current = workspace ? folderOf({ workspace } as Session) : null
-    const visible = sessions.filter((s) => {
-      if (!query.trim()) return true
-      return s.title.toLowerCase().includes(query.trim().toLowerCase())
-    })
+    const visible = sessions
     const map = new Map<string | null, Session[]>()
     for (const s of visible) {
       const key = folderOf(s)
@@ -79,7 +75,7 @@ export function Sidebar({
       if (b === current) return 1
       return (a ?? 'zzz').localeCompare(b ?? 'zzz')
     })
-  }, [sessions, workspace, query])
+  }, [sessions, workspace])
 
   const fold = (project: string | null) => {
     const key = project ?? 'none'
@@ -96,7 +92,7 @@ export function Sidebar({
     return (
       <div
         className="flex h-full w-[52px] shrink-0 flex-col items-center gap-[10px] pt-[12px]"
-        style={{ borderRight: '1px solid var(--line-1)' }}
+        style={{ borderLeft: '1px solid var(--line-1)' }}
       >
         <button
           type="button"
@@ -132,83 +128,78 @@ export function Sidebar({
       animate={{ x: 0, opacity: 1 }}
       transition={{ duration: dur.panel, ease: easeOut }}
       className="flex h-full w-[248px] shrink-0 flex-col"
-      style={{ borderRight: '1px solid var(--line-1)', background: 'var(--canvas)' }}
+      style={{ borderLeft: '1px solid var(--line-1)', background: 'var(--canvas)' }}
     >
-      {/* the head: mark, name, and the door out */}
-      <div className="flex items-center gap-[8px] px-[12px] pt-[12px] pb-[6px]">
-        <img src="icon/icon-128.png" alt="" width={20} height={20} style={{ opacity: 0.9 }} />
-        <span className="display flex-1 text-[13px]" style={{ color: 'var(--text-1)' }}>
-          Loong
+      {/* the head is a label, not a logo: the workspace is what this column is
+          about, and the mark already lives in the window title */}
+      <div className="flex items-center gap-[8px] px-[14px] pt-[14px] pb-[4px]">
+        <span
+          className="mono flex-1 text-[10px] tracking-[0.14em] uppercase"
+          style={{ color: 'var(--text-4)' }}
+        >
+          Workspace
         </span>
         <button
           type="button"
           onClick={onToggle}
-          className="ctl grid h-[24px] w-[24px] place-items-center rounded-[6px]"
+          className="ctl grid h-[22px] w-[22px] place-items-center rounded-[6px]"
           style={{ color: 'var(--text-4)' }}
           title="Close the sidebar"
           aria-label="Close the sidebar"
         >
-          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
             <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
           </svg>
         </button>
       </div>
 
-      {/* the two actions a thread list is for */}
-      <div className="flex flex-col gap-[5px] px-[10px] pb-[8px]">
-        <button
-          type="button"
-          onClick={onNewThread}
-          className="ctl flex items-center gap-[8px] rounded-[8px] px-[9px] py-[7px] text-left text-[12.5px]"
-          style={{ border: '1px solid var(--line-3)', color: 'var(--text-1)' }}
-        >
-          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
-            <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-          </svg>
-          New thread
-        </button>
-        {/* a project and a session inside it are two different acts: one picks
-            the folder, the other opens a thread in the folder already open */}
+      {/* Home: a fresh thread, the way a workspace starts */}
+      <button
+        type="button"
+        onClick={onNewThread}
+        className="ctl mx-[8px] flex items-center gap-[9px] rounded-[8px] px-[10px] py-[6px] text-left"
+        style={{ color: 'var(--text-2)' }}
+      >
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+          <path d="M2.5 7.2L8 2.5l5.5 4.7V13a.5.5 0 01-.5.5h-3V9.5h-4v4h-3a.5.5 0 01-.5-.5z" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <span className="text-[12.5px]">Home</span>
+      </button>
+
+      {/* Projects: the label above the folders. A workspace is a set of
+          folders, and a folder is a set of threads. */}
+      <div className="mt-[10px] flex items-center gap-[8px] px-[14px] pb-[4px]">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
+          <path d="M2 4.5h12M2 8h12M2 11.5h12" stroke="var(--text-4)" strokeWidth="1.3" strokeLinecap="round" />
+        </svg>
+        <span className="mono flex-1 text-[10px] tracking-[0.14em] uppercase" style={{ color: 'var(--text-4)' }}>
+          Projects
+        </span>
         <button
           type="button"
           onClick={onNewProject}
-          className="ctl flex items-center gap-[8px] rounded-[8px] px-[9px] py-[6px] text-left text-[12px]"
+          className="ctl grid h-[20px] w-[20px] place-items-center rounded-[5px]"
           style={{ color: 'var(--text-3)' }}
-          title="Pick a folder — it becomes a project, named after the folder"
+          title="New project — pick a folder"
+          aria-label="New project"
         >
-          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
-            <path
-              d="M2 4.2h4.4l1.3 1.4H14v7.2H2z"
-              stroke="currentColor"
-              strokeWidth="1.3"
-              strokeLinejoin="round"
-            />
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
+            <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
           </svg>
-          New project…
         </button>
         <button
           type="button"
           onClick={onSearch}
-          className="ctl flex items-center gap-[8px] rounded-[8px] px-[9px] py-[6px] text-left text-[12px]"
+          className="ctl grid h-[20px] w-[20px] place-items-center rounded-[5px]"
           style={{ color: 'var(--text-3)' }}
+          title="Search threads (Ctrl+K)"
+          aria-label="Search threads"
         >
-          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
-            <circle cx="7" cy="7" r="4.2" stroke="currentColor" strokeWidth="1.4" />
-            <path d="M10.2 10.2L14 14" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
+            <circle cx="7" cy="7" r="4.2" stroke="currentColor" strokeWidth="1.3" />
+            <path d="M10.2 10.2L13.5 13.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
           </svg>
-          Search threads
-          <span className="mono ml-auto text-[10px]" style={{ color: 'var(--text-4)' }}>
-            ⌘K
-          </span>
         </button>
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Filter…"
-          className="mono w-full rounded-[7px] px-[9px] py-[5px] text-[11.5px] outline-none"
-          style={{ border: '1px solid var(--line-2)', background: 'var(--surface-sunken)', color: 'var(--text-1)' }}
-          aria-label="Filter threads"
-        />
       </div>
 
       {/* the threads, by project */}
@@ -279,28 +270,26 @@ export function Sidebar({
         </div>
       )}
 
-      {/* the way out: settings, sound, theme */}
-      <footer
-        className="flex items-center gap-[4px] px-[10px] py-[9px]"
-        style={{ borderTop: '1px solid var(--line-1)' }}
-      >
+      {/* the way out: memory and settings, at the bottom where the eye
+          lands when it leaves the list */}
+      <footer className="mt-auto flex flex-col gap-[2px] px-[8px] py-[9px]" style={{ borderTop: '1px solid var(--line-1)' }}>
         <button
           type="button"
           onClick={onOpenSettings}
-          className="ctl flex flex-1 items-center gap-[7px] rounded-[7px] px-[8px] py-[6px] text-left text-[12px]"
+          className="ctl flex items-center gap-[9px] rounded-[8px] px-[10px] py-[6px] text-left text-[12.5px]"
           style={{ color: 'var(--text-2)' }}
         >
-          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
-            <circle cx="8" cy="8" r="2.2" stroke="currentColor" strokeWidth="1.3" />
-            <path d="M8 1.6v2M8 12.4v2M1.6 8h2M12.4 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M12.5 3.5l-1.4 1.4M4.9 11.1L3.5 12.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+            <path d="M2.5 4.2A6.5 6.5 0 0112 5.4M13.5 11.8A6.5 6.5 0 014 10.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+            <circle cx="8" cy="8" r="2.1" stroke="currentColor" strokeWidth="1.3" />
           </svg>
-          Settings
+          Memory
         </button>
         <button
           type="button"
           onClick={onToggleSound}
-          className="ctl grid h-[28px] w-[28px] place-items-center rounded-[7px]"
-          style={{ color: soundOn ? 'var(--text-1)' : 'var(--text-4)' }}
+          className="ctl flex items-center gap-[9px] rounded-[8px] px-[10px] py-[6px] text-left text-[12.5px]"
+          style={{ color: 'var(--text-2)' }}
           title={soundOn ? 'Sound on' : 'Sound off'}
           aria-label={soundOn ? 'Sound on' : 'Sound off'}
         >
@@ -308,6 +297,19 @@ export function Sidebar({
             <path d="M3 6.2v3.6h2.2L8.4 12V4L5.2 6.2H3z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
             {soundOn && <path d="M10.4 5.6a3.4 3.4 0 010 4.8M12.2 3.8a6 6 0 010 8.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />}
           </svg>
+          Sound
+        </button>
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          className="ctl flex items-center gap-[9px] rounded-[8px] px-[10px] py-[6px] text-left text-[12.5px]"
+          style={{ color: 'var(--text-2)' }}
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+            <circle cx="8" cy="8" r="2.2" stroke="currentColor" strokeWidth="1.3" />
+            <path d="M8 1.6v2M8 12.4v2M1.6 8h2M12.4 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M12.5 3.5l-1.4 1.4M4.9 11.1L3.5 12.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+          </svg>
+          Settings
         </button>
       </footer>
     </motion.aside>

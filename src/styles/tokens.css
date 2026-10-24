@@ -88,6 +88,33 @@
   --scrim: oklch(0.085 0 0 / 0.72);
 }
 
-/* ---- one look -------------------------------------------------------
-   There is no light theme. A product with two themes is a product that has
-   not decided what it is; Loong is the dark engraving, full stop. */
+/* ---- light — white canvas, black engraving -------------------------------
+   The same ramp, read the other way: the canvas is the lightest step and the
+   text the darkest, so a pure white-to-black interface holds in both
+   directions. Nothing here is a second palette; every value is a step on the
+   ramp above, mirrored. */
+[data-theme='light'] {
+  --canvas: var(--ink-000);
+  --surface: oklch(0.985 0.002 75);
+  --surface-raised: var(--ink-050);
+  --surface-sunken: oklch(0.955 0.004 75);
+
+  --text-1: var(--ink-950);
+  --text-2: var(--ink-700);
+  --text-3: var(--ink-600);
+  --text-4: var(--ink-500);
+
+  /* hairlines are alpha over the canvas here too — a light theme drawn with
+     grey borders instead of alpha reads as a box, not as an edge. */
+  --line-1: oklch(0.145 0 0 / 0.07);
+  --line-2: oklch(0.145 0 0 / 0.13);
+  --line-3: oklch(0.145 0 0 / 0.22);
+  --line-4: oklch(0.145 0 0 / 0.38);
+  --line-5: oklch(0.145 0 0 / 0.66);
+
+  --noise-opacity: 0.016;
+  --hatch-line: oklch(0.145 0 0 / 0.08);
+  --guilloche: oklch(0.145 0 0 / 0.12);
+  --guilloche-hot: oklch(0.145 0 0 / 0.34);
+  --scrim: oklch(0.955 0 0 / 0.72);
+}

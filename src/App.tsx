@@ -604,10 +604,10 @@ const [workspace, setWorkspace] = useState<string | null>(null)
   }, [])
 
   useEffect(() => {
-    /* one look: the attribute exists so the token file has a single source of
-       truth, and it is always dark */
-    document.documentElement.dataset.theme = 'dark'
-  }, [])
+    /* the theme is one attribute the token file reads; the ramp is the same
+       either way, only the direction it is read in changes */
+    document.documentElement.dataset.theme = settings.theme
+  }, [settings.theme])
 
   useEffect(() => {
     sound.setEnabled(settings.soundEnabled)
@@ -954,6 +954,20 @@ const [workspace, setWorkspace] = useState<string | null>(null)
     () => Array.from(new Set([...primary.runningIds, ...secondary.runningIds])),
     [primary.runningIds, secondary.runningIds],
   )
+
+  /* the header names the thread the way the sidebar groups it — the project,
+     then the session — because a bare title cannot tell you which folder you
+     are looking at */
+  const headerTitle = useMemo(() => {
+    const found = sessions.find((s) => s.id === focusedId)
+    const project = found?.workspace
+      ? (found.workspace.split(/[\\/]/).filter(Boolean).pop() ?? null)
+      : null
+    const title = displayTitle(found?.title ?? 'New thread')
+    return project && !title.toLowerCase().includes(project.toLowerCase())
+      ? `${project} · ${title}`
+      : title
+  }, [sessions, focusedId])
 
   const activeTitle = useMemo(() => {
     const found = sessions.find((s) => s.id === focusedId)
@@ -1379,37 +1393,6 @@ const [workspace, setWorkspace] = useState<string | null>(null)
       >
         <Noise />
 
-        <Sidebar
-          sessions={drawerSessions}
-          activeId={activeId}
-          runningIds={mergedRunningIds}
-          workspace={workspace}
-          open={sidebarOpen}
-          onToggle={() => setSidebarOpen((v) => !v)}
-          onNewThread={() => void createThread()}
-          onNewProject={() => void newProject()}
-          onSearch={() => setPaletteOpen(true)}
-          onOpenSettings={() => setSettingsOpen(true)}
-          soundOn={settings.soundEnabled}
-          onToggleSound={toggleSound}
-          onSelect={(s) => {
-            sound.play('select')
-            void openThread(s.id)
-          }}
-          onRename={renameThread}
-          onDelete={(id) => setDeleteTarget(id)}
-          onFork={(id) => void forkThread(id)}
-          runningAgents={allAgents.filter((x) => x.running).length}
-        />
-
-
-        <Resizer
-          onPointerDown={railSize.begin}
-          onReset={railSize.reset}
-          dragging={railSize.dragging}
-          label="Rail width"
-        />
-
         <main className="relative flex min-w-0 flex-1 flex-col">
           <header
             className="flex h-[42px] shrink-0 items-center justify-between px-[24px]"
@@ -1457,7 +1440,7 @@ const [workspace, setWorkspace] = useState<string | null>(null)
                   style={{ color: 'var(--text-1)' }}
                   title="Click to rename this thread"
                 >
-                  {activeTitle}
+                  {headerTitle}
                 </h1>
               )}
               <span
@@ -1713,6 +1696,38 @@ const [workspace, setWorkspace] = useState<string | null>(null)
             remoteModels={remoteModels}
           />
         </main>
+
+        <Sidebar
+          sessions={drawerSessions}
+          activeId={activeId}
+          runningIds={mergedRunningIds}
+          workspace={workspace}
+          open={sidebarOpen}
+          onToggle={() => setSidebarOpen((v) => !v)}
+          onNewThread={() => void createThread()}
+          onNewProject={() => void newProject()}
+          onSearch={() => setPaletteOpen(true)}
+          onOpenSettings={() => setSettingsOpen(true)}
+          soundOn={settings.soundEnabled}
+          onToggleSound={toggleSound}
+          onSelect={(s) => {
+            sound.play('select')
+            void openThread(s.id)
+          }}
+          onRename={renameThread}
+          onDelete={(id) => setDeleteTarget(id)}
+          onFork={(id) => void forkThread(id)}
+          runningAgents={allAgents.filter((x) => x.running).length}
+        />
+
+
+        <Resizer
+          onPointerDown={railSize.begin}
+          onReset={railSize.reset}
+          dragging={railSize.dragging}
+          label="Rail width"
+        />
+
       </div>
     </MotionConfig>
   )
