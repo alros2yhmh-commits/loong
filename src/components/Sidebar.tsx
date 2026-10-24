@@ -31,8 +31,6 @@ export function Sidebar({
   onSearch,
   onOpenSettings,
   onOpenMemory,
-  soundOn,
-  onToggleSound,
   onSelect,
   onRename,
   onDelete,
@@ -52,8 +50,6 @@ export function Sidebar({
   onOpenSettings: () => void
   /** memory is a place, not a preference — it opens its own panel */
   onOpenMemory: () => void
-  soundOn: boolean
-  onToggleSound: () => void
   onSelect: (s: Session) => void
   onRename: (id: string, title: string) => void
   onDelete: (id: string) => void
@@ -95,7 +91,7 @@ export function Sidebar({
     return (
       <div
         className="flex h-full w-[52px] shrink-0 flex-col items-center gap-[10px] pt-[12px]"
-        style={{ borderLeft: '1px solid var(--line-1)' }}
+        style={{ borderRight: "1px solid var(--line-1)" }}
       >
         <button
           type="button"
@@ -131,7 +127,7 @@ export function Sidebar({
       animate={{ x: 0, opacity: 1 }}
       transition={{ duration: dur.panel, ease: easeOut }}
       className="flex h-full w-[248px] shrink-0 flex-col"
-      style={{ borderLeft: '1px solid var(--line-1)', background: 'var(--canvas)' }}
+      style={{ borderRight: "1px solid var(--line-1)", background: 'var(--canvas)' }}
     >
       {/* the head is a label, not a logo: the workspace is what this column is
           about, and the mark already lives in the window title */}
@@ -288,20 +284,7 @@ export function Sidebar({
           </svg>
           Memory
         </button>
-        <button
-          type="button"
-          onClick={onToggleSound}
-          className="ctl flex items-center gap-[9px] rounded-[8px] px-[10px] py-[6px] text-left text-[12.5px]"
-          style={{ color: 'var(--text-2)' }}
-          title={soundOn ? 'Sound on' : 'Sound off'}
-          aria-label={soundOn ? 'Sound on' : 'Sound off'}
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
-            <path d="M3 6.2v3.6h2.2L8.4 12V4L5.2 6.2H3z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
-            {soundOn && <path d="M10.4 5.6a3.4 3.4 0 010 4.8M12.2 3.8a6 6 0 010 8.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />}
-          </svg>
-          Sound
-        </button>
+
         <button
           type="button"
           onClick={onOpenSettings}

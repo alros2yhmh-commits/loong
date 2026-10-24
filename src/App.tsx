@@ -2,27 +2,20 @@ import { AnimatePresence, motion, MotionConfig } from 'motion/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Composer } from './components/Composer'
 import { CommandPalette, type Command } from './components/CommandPalette'
-import { ArtifactsPanel, countArtifacts } from './components/ArtifactsPanel'
 import { Noise } from './components/Noise'
 import { Sidebar } from './components/Sidebar'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { downloadText, threadToMarkdown, transcriptText } from './lib/export-thread'
-import { FilesPanel } from './components/FilesPanel'
 import { MemoryPanel } from './components/MemoryPanel'
-import { displayTitle } from './lib/title'
+import { NewProjectDialog } from './components/NewProjectDialog'
 import { Resizer } from './components/Resizer'
 import { RunBar } from './components/RunBar'
 import { RunStatus } from './components/RunStatus'
-import { StudioStrip } from './components/StudioStrip'
 import { Settings } from './components/Settings'
 import { Thread } from './components/Thread'
-import { ThreadDrawer } from './components/ThreadDrawer'
 import { SelectionBar, type SelectionAction } from './components/SelectionBar'
-import { AgentsPanel } from './components/AgentsPanel'
-import { ReviewPanel } from './components/ReviewPanel'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { Welcome } from './components/Welcome'
-import { IconFolder } from './components/Icons'
 import type { Session } from './lib/contract'
 import {
   api,
@@ -62,10 +55,12 @@ function toSession(s: ServerSession): Session {
 }
 
 export default function App() {
-  const { settings, set, provider } = useSettings()
+  const { settings, set } = useSettings()
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [memoryOpen, setMemoryOpen] = useState(false)
+  /* a project is named, then placed — not named after the folder it landed in */
+  const [newProjectOpen, setNewProjectOpen] = useState(false)
 
   const [health, setHealth] = useState<Health | null>(null)
   const [models, setModels] = useState<LocalModel[]>([])
@@ -76,7 +71,7 @@ export default function App() {
   const [splitId, setSplitId] = useState<string | null>(null)
   /* which pane the composer, run bar and shortcuts drive */
   const [splitFocus, setSplitFocus] = useState<'primary' | 'secondary'>('primary')
-  const [loadingThread, setLoadingThread] = useState(false)
+  const [, setLoadingThread] = useState(false)
   /* a path is the same path however it is written: case on Windows, a trailing
    slash, forward or backward separators. An exact string compare is how "the
    folder did not change" was reported for a folder that had. */
@@ -85,8 +80,6 @@ const samePath = (a: string, b: string): boolean =>
 
 const [workspace, setWorkspace] = useState<string | null>(null)
   const [mode, setMode] = useState<'ask' | 'plan' | 'agent'>('agent')
-  const [editingTitle, setEditingTitle] = useState(false)
-  const [titleDraft, setTitleDraft] = useState('')
   /* the key for a run, when there is one in this context — dev only; packaged
      runs resolve their key in the agent process */
   const [runKey, setRunKey] = useState<string | undefined>(undefined)
@@ -417,17 +410,6 @@ const [workspace, setWorkspace] = useState<string | null>(null)
    * A brand-new app has no session yet — the first message creates one — so
    * renaming before that has to create the thread first, or the name would be
    * written nowhere.
-   */
-  const renameActive = useCallback(
-    async (title: string) => {
-      const trimmed = title.trim()
-      if (!trimmed) return
-      let id = focusedId
-      if (!id) id = await createThread()
-      if (!id) return
-      await renameThread(id, trimmed)
-    },
-    [focusedId, createThread, renameThread],
   )
 
   /* ---- workspace -------------------------------------------------------- */
@@ -492,10 +474,23 @@ const [workspace, setWorkspace] = useState<string | null>(null)
     }
   }, [openThread])
 
-  const newProject = useCallback(async () => {
-    await changeWorkspace()
-    await createThread()
-  }, [changeWorkspace, createThread])
+  const newProject = useCallback(() => setNewProjectOpen(true), [])
+
+  /** the dialog collected a name and a folder: make it, then open its thread */
+  const createProject = useCallback(
+    async (name: string, folder: string) => {
+      setNewProjectOpen(false)
+      try {
+        await api.setWorkspace(folder)
+        setWorkspace(folder)
+        const id = await createThread()
+        if (id) await renameThread(id, name)
+      } catch {
+        /* a folder that cannot be set leaves the app where it was */
+      }
+    },
+    [createThread, renameThread],
+  )
 
 
 
@@ -781,7 +776,6 @@ const [workspace, setWorkspace] = useState<string | null>(null)
 
   /* checkpoints arrive newest-first; user messages happen oldest-first — zip
      them so each rewind button sits on the run it undoes */
-  const artifactCount = useMemo(() => countArtifacts(stream.blocks), [stream.blocks])
 
   const rewindTargets = useMemo(() => {
     const oldestFirst = [...checkpoints].reverse()
@@ -825,7 +819,7 @@ const [workspace, setWorkspace] = useState<string | null>(null)
 
   const [toast, setToast] = useState<string | null>(null)
   /** dims everything but the active block — a reading mode, not a theme */
-  const [zen, setZen] = useState(false)
+  const [zen] = useState(false)
   /* one column on the left, like every thread list a person already knows */
   const [sidebarOpen, setSidebarOpen] = useState(
     () => localStorage.getItem('loong.sidebar') !== 'closed',
@@ -960,44 +954,10 @@ const [workspace, setWorkspace] = useState<string | null>(null)
   /* the header names the thread the way the sidebar groups it — the project,
      then the session — because a bare title cannot tell you which folder you
      are looking at */
-  const headerTitle = useMemo(() => {
-    const found = sessions.find((s) => s.id === focusedId)
-    const project = found?.workspace
-      ? (found.workspace.split(/[\\/]/).filter(Boolean).pop() ?? null)
-      : null
-    const title = displayTitle(found?.title ?? 'New thread')
-    return project && !title.toLowerCase().includes(project.toLowerCase())
-      ? `${project} · ${title}`
-      : title
-  }, [sessions, focusedId])
 
-  const activeTitle = useMemo(() => {
-    const found = sessions.find((s) => s.id === focusedId)
-    /* the header shows the name a reader can read; editing it starts from the
-       same clean text, so a rename cannot re-introduce the markdown */
-    return displayTitle(found?.title ?? 'New thread')
-  }, [sessions, focusedId])
 
   /* renaming from the header, the way every chat app does it */
-  const titleInput = useRef<HTMLInputElement>(null)
-  const titleCancelled = useRef(false)
 
-  const startTitleEdit = useCallback(() => {
-    setTitleDraft(activeTitle)
-    titleCancelled.current = false
-    setEditingTitle(true)
-  }, [activeTitle])
-
-  const commitTitle = useCallback(() => {
-    if (titleCancelled.current) {
-      titleCancelled.current = false
-      setEditingTitle(false)
-      return
-    }
-    setEditingTitle(false)
-    const next = titleDraft.trim()
-    if (next && next !== activeTitle) void renameActive(next)
-  }, [titleDraft, activeTitle, renameActive])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1257,17 +1217,6 @@ const [workspace, setWorkspace] = useState<string | null>(null)
      the router picks per run, and the old label could never be right there.
      A route switch must also be visible IMMEDIATELY: while a route is active
      the label says the route, never the last manual pick. */
-  const onRoute = settings.route !== 'manual'
-  const activeModel = onRoute ? stream.usage?.model ?? '' : settings.model
-  const runtimeLabel = health
-    ? `${provider.label} · ${onRoute ? `${settings.route} · ` : ''}${activeModel || (onRoute ? 'picks per run' : 'no model')}`
-    : 'agent offline'
-
-  /** the folder the agent is working in, shown under the thread title */
-  const workspaceName = workspace
-    ? workspace.split(/[\\/]/).filter(Boolean).pop() ?? workspace
-    : '…'
-  const modeLabel = mode === 'agent' ? 'agent' : mode === 'plan' ? 'plan' : 'ask'
 
   /* one pane. The composer, run bar and shortcuts target the focused pane's
      stream; clicking a pane moves the focus. The right pane carries its own
@@ -1395,110 +1344,28 @@ const [workspace, setWorkspace] = useState<string | null>(null)
       >
         <Noise />
 
+        <Sidebar
+          sessions={drawerSessions}
+          activeId={activeId}
+          runningIds={mergedRunningIds}
+          workspace={workspace}
+          open={sidebarOpen}
+          onToggle={() => setSidebarOpen((v) => !v)}
+          onNewThread={() => void createThread()}
+          onNewProject={newProject}
+          onSearch={() => setPaletteOpen(true)}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenMemory={() => setMemoryOpen(true)}
+          onSelect={(s) => {
+            sound.play('select')
+            void openThread(s.id)
+          }}
+          onRename={renameThread}
+          onDelete={(id) => setDeleteTarget(id)}
+          onFork={(id) => void forkThread(id)}
+          runningAgents={allAgents.filter((x) => x.running).length}
+        />
         <main className="relative flex min-w-0 flex-1 flex-col">
-          <header
-            className="flex h-[42px] shrink-0 items-center justify-between px-[24px]"
-            style={{ borderBottom: '1px solid var(--line-1)' }}
-          >
-            <div className="flex min-w-0 items-baseline gap-[10px]">
-              {editingTitle ? (
-                <input
-                  ref={titleInput}
-                  autoFocus
-                  value={titleDraft}
-                  maxLength={120}
-                  onChange={(e) => setTitleDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      e.currentTarget.blur()
-                    } else if (e.key === 'Escape') {
-                      e.preventDefault()
-                      titleCancelled.current = true
-                      e.currentTarget.blur()
-                    }
-                  }}
-                  onBlur={commitTitle}
-                  className="display rounded-[4px] px-[4px] py-[1px] text-[13.5px] outline-none"
-                  style={{
-                    width: 240,
-                    color: 'var(--text-1)',
-                    background: 'var(--surface-sunken)',
-                    border: '1px solid var(--line-4)',
-                  }}
-                />
-              ) : (
-                <h1
-                  role="button"
-                  tabIndex={0}
-                  onClick={startTitleEdit}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault()
-                      startTitleEdit()
-                    }
-                  }}
-                  className="display min-w-0 cursor-text truncate rounded-[4px] px-[3px] py-[1px] text-[13.5px] outline-none"
-                  style={{ color: 'var(--text-1)' }}
-                  title="Click to rename this thread"
-                >
-                  {headerTitle}
-                </h1>
-              )}
-              <span
-                className="mono shrink-0 text-[11.5px]"
-                style={{ color: 'var(--text-4)' }}
-              >
-                {loadingThread ? 'loading…' : `${stream.blocks.length} blocks`}
-              </span>
-              {/* what the agent is actually working on, always visible. A
-                  workspace you cannot see is a workspace you cannot trust. */}
-              <button
-                type="button"
-                className="ctl flex shrink-0 items-center gap-[5px] rounded-[5px] px-[6px] py-[2px]"
-                style={{
-                  border: '1px solid var(--line-2)',
-                  color: 'var(--text-3)',
-                  background: 'var(--surface)',
-                }}
-                onClick={() => void changeWorkspace()}
-                title={`${workspace ?? '…'} — click to change`}
-              >
-                <IconFolder size={11} />
-                <span className="mono max-w-[180px] truncate text-[11.5px]">
-                  {workspaceName}
-                </span>
-              </button>
-            </div>
-        <div className="flex shrink-0 items-center gap-[12px]">
-          <span
-            className="mono shrink-0 text-[11.5px]"
-            style={{ color: 'var(--text-4)' }}
-            title="The mode the agent is running in"
-          >
-            {modeLabel}
-          </span>
-          {/* what the last run actually cost at the provider, when it tells us */}
-          {stream.usage && (
-            <span
-              className="mono hidden shrink-0 text-[11.5px] lg:inline"
-              style={{ color: 'var(--text-4)' }}
-              title={`The provider's accounting for the last run: ${stream.usage.promptTokens.toLocaleString()} in, ${stream.usage.completionTokens.toLocaleString()} out`}
-            >
-              {(stream.usage.promptTokens / 1000).toFixed(1)}k in ·{' '}
-              {(stream.usage.completionTokens / 1000).toFixed(1)}k out
-            </span>
-          )}
-              <motion.span
-                className="mono hidden shrink-0 text-[11.5px] md:inline"
-                style={{ color: health ? 'var(--text-4)' : 'var(--text-2)' }}
-                animate={{ opacity: drawer.open ? 0 : 1 }}
-                transition={{ duration: dur.enter, ease: easeOut }}
-              >
-                {runtimeLabel}
-              </motion.span>
-            </div>
-          </header>
 
           {/* the toast: a run that finishes, or a human the run needs, says so
               even when the reader is looking elsewhere */}
@@ -1544,15 +1411,6 @@ const [workspace, setWorkspace] = useState<string | null>(null)
               />
             </div>
           )}
-
-          {/* the instruments: shape of the run, a scrubber, presence, zen */}
-          <StudioStrip
-            blocks={stream.blocks}
-            phase={stream.phase}
-            running={stream.running}
-            zen={zen}
-            onZen={() => setZen((z) => !z)}
-          />
 
           <div ref={transcriptRef} className="relative flex min-h-0 flex-1">
             {splitId ? (
@@ -1629,46 +1487,6 @@ const [workspace, setWorkspace] = useState<string | null>(null)
             )}
           </AnimatePresence>
 
-          <ThreadDrawer
-            open={drawer.open}
-            pinned={drawer.pinned}
-            onTogglePin={() => drawer.setPinned(!drawer.pinned)}
-            artifacts={<ArtifactsPanel blocks={stream.blocks} />}
-            files={<FilesPanel />}
-            artifactCount={artifactCount}
-            agents={
-              <AgentsPanel
-                agents={allAgents}
-                activeId={activeId ?? ''}
-                onOpen={(id) => {
-                  sound.play('select')
-                  if (id === splitId) setSplitFocus('secondary')
-                  else void openThread(id)
-                }}
-                onStop={(id) => {
-                  if (id === splitId) secondary.stop(id)
-                  else primary.stop(id)
-                }}
-              />
-            }
-            agentCount={allAgents.length}
-            review={<ReviewPanel />}
-          />
-
-          <AnimatePresence>
-            {drawer.hot && !drawer.open && (
-              <motion.div
-                key="grip"
-                className="absolute top-1/2 right-0 z-50 -translate-y-1/2 rounded-l-full"
-                style={{ width: 2, height: 76, background: 'var(--line-5)' }}
-                initial={{ opacity: 0, scaleY: 0.4 }}
-                animate={{ opacity: 1, scaleY: 1 }}
-                exit={{ opacity: 0, scaleY: 0.4 }}
-                transition={{ duration: dur.enter, ease: easeOut }}
-              />
-            )}
-          </AnimatePresence>
-
           <ConfirmDialog
             open={deleteTarget != null}
             title="Delete this thread?"
@@ -1699,31 +1517,19 @@ const [workspace, setWorkspace] = useState<string | null>(null)
           />
 
           {memoryOpen && <MemoryPanel onClose={() => setMemoryOpen(false)} />}
+
+          {newProjectOpen && (
+            <NewProjectDialog
+              onCancel={() => setNewProjectOpen(false)}
+              onPickFolder={async () => {
+                const bridge = (window as unknown as { loong?: { pickWorkspace?: () => Promise<string | null> } }).loong
+                return bridge?.pickWorkspace ? bridge.pickWorkspace() : null
+              }}
+              onCreate={(name, folder) => void createProject(name, folder)}
+            />
+          )}
         </main>
 
-        <Sidebar
-          sessions={drawerSessions}
-          activeId={activeId}
-          runningIds={mergedRunningIds}
-          workspace={workspace}
-          open={sidebarOpen}
-          onToggle={() => setSidebarOpen((v) => !v)}
-          onNewThread={() => void createThread()}
-          onNewProject={() => void newProject()}
-          onSearch={() => setPaletteOpen(true)}
-          onOpenSettings={() => setSettingsOpen(true)}
-          onOpenMemory={() => setMemoryOpen(true)}
-          soundOn={settings.soundEnabled}
-          onToggleSound={toggleSound}
-          onSelect={(s) => {
-            sound.play('select')
-            void openThread(s.id)
-          }}
-          onRename={renameThread}
-          onDelete={(id) => setDeleteTarget(id)}
-          onFork={(id) => void forkThread(id)}
-          runningAgents={allAgents.filter((x) => x.running).length}
-        />
 
 
         <Resizer

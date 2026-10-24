@@ -57,7 +57,7 @@
 }
 
 /* ---- dark — black canvas, white engraving ------------------------------- */
-[data-theme='dark'] {
+:root[data-theme='dark'] {
   --canvas: var(--ink-950);
   /* surfaces are a ramp, not one grey: the canvas, a raised block, a sunken
      well. Three steps are what let a card read as a card without a shadow. */

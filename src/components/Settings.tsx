@@ -143,7 +143,7 @@ export function Settings({
             >
               {[
                 ['Everyday', [['appearance', 'Look'], ['sound', 'Sound'], ['motion', 'Motion']]],
-                ['Model', [['runtime', 'Runtime'], ['provider', 'Model'], ['router', 'Router']]],
+                ['Model', [['runtime', 'Runtime'], ['provider', 'Model']]],
                 ['Agent', [['skills', 'Skills'], ['library', 'Library'], ['timers', 'Timers']]],
                 ['Power', [['integrations', 'Integrations'], ['mcp', 'MCP'], ['autonomy', 'Autonomy'], ['commands', 'Commands']]],
                 ['Desk', [['layout', 'Layout'], ['analytics', 'Analytics'], ['about', 'About']]],
