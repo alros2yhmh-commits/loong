@@ -43,6 +43,7 @@ import { INTEGRATIONS, configuredIntegrations, connectIntegration, disconnectInt
 import { ackTimer, addTimer, cancelTimer, fireDue, listTimers, parseDelay, pendingTimers } from './timers.ts'
 import type { ProviderId } from './providers.ts'
 import { pendingApprovals, resolveApproval, pendingQuestions, resolveQuestion } from './approvals.ts'
+import { getSettings, putSettings, getFolderPrefs, putFolderPrefs } from './settings.ts'
 
 /* ---------------------------------------------------------------------------
    The local agent server.
@@ -196,6 +197,84 @@ app.get('/api/health', async (c) => {
 
 app.get('/api/workspace', (c) => {
   return c.json({ workspace: getWorkspace() })
+})
+
+/* The tools the agent can reach, published so the interface does not hardcode
+   a list that will drift. Mirrors the set the agent assembles in agent.ts. */
+const TOOL_MANIFEST = [
+  { name: 'list_dir', access: 'read', summary: 'List a directory inside the workspace' },
+  { name: 'read_file', access: 'read', summary: 'Read a text file, with line numbers' },
+  { name: 'grep', access: 'read', summary: 'Search file contents with a regular expression' },
+  { name: 'fetch_url', access: 'read', summary: 'Fetch a URL and return its text' },
+  { name: 'web_search', access: 'read', summary: 'Search the web (brave, duckduckgo, searxng, tavily)' },
+  { name: 'recall', access: 'read', summary: 'Read the library' },
+  { name: 'read_document', access: 'read', summary: 'Read a document from the library' },
+  { name: 'thinking', access: 'read', summary: 'Think before acting' },
+  { name: 'write_file', access: 'write', summary: 'Create or overwrite a file — asks first' },
+  { name: 'edit_file', access: 'write', summary: 'Replace text in a file — asks first' },
+  { name: 'multi_edit', access: 'write', summary: 'Several edits in one call — asks first' },
+  { name: 'mkdir', access: 'write', summary: 'Create a directory — asks first' },
+  { name: 'delete_file', access: 'write', summary: 'Delete a file or directory — asks first' },
+  { name: 'move_file', access: 'write', summary: 'Move or rename — asks first' },
+  { name: 'shell', access: 'write', summary: 'Run a command in the workspace — asks first' },
+  { name: 'propose_changes', access: 'write', summary: 'Propose files and submit them for approval' },
+  { name: 'ask_user', access: 'ask', summary: 'Ask the reader a question and wait' },
+  { name: 'plan', access: 'plan', summary: 'Propose a plan without editing anything' },
+  { name: 'audit', access: 'plan', summary: 'Audit the work against the request' },
+  { name: 'browser', access: 'write', summary: 'Drive a browser to verify a change' },
+]
+
+/* ---- live runs ------------------------------------------------------------
+   A run's state used to exist only inside its SSE stream, so a restored
+   session showed nothing until the next run started. The set is the smallest
+   honest fix: the id is added when the stream opens and removed when it
+   closes, and /api/sessions/:id/state reads it. */
+const liveThreads = new Set<string>()
+
+/* ---- settings (G1) ------------------------------------------------------
+   The reader's preferences, persisted. These lived in the browser's
+   localStorage until the interface was rebuilt; a preference that does not
+   survive a restart is not a preference. The permission mode is remembered
+   per folder, except Plan, which is session-only. */
+
+app.get('/api/settings', (c) =>
+  c.json({ settings: getSettings(), folders: getFolderPrefs(getWorkspace()) }),
+)
+
+app.put('/api/settings', async (c) => {
+  const body = await c.req.json().catch(() => ({}))
+  const folders = (body as { folders?: unknown }).folders
+  if (folders && typeof folders === 'object') {
+    const prefs = folders as { mode?: unknown; trust?: unknown }
+    putFolderPrefs(getWorkspace(), {
+      mode: prefs.mode === 'ask' || prefs.mode === 'agent' ? prefs.mode : undefined,
+      trust: prefs.trust === 'auto' ? 'auto' : prefs.trust === 'ask' ? 'ask' : undefined,
+    })
+  }
+  return c.json({ settings: putSettings((body as { settings?: unknown }).settings) })
+})
+
+/* ---- tools (G3) ---------------------------------------------------------
+   What the agent can actually do, so the interface does not have to hardcode
+   a list that will drift. */
+
+app.get('/api/tools', (c) => c.json({ tools: TOOL_MANIFEST }))
+
+/* ---- session state (G5) ------------------------------------------------
+   What a restored session is doing, so a reload is not a blank screen. */
+
+app.get('/api/sessions/:id/state', (c) => {
+  const id = c.req.param('id')
+  const raw = loadBlocks(id) ?? []
+  const blocks = raw as { k?: string; plan?: { steps?: { status?: string }[] } }[]
+  const plan = [...blocks].reverse().find((b) => b.k === 'plan')
+  const steps = plan?.plan?.steps ?? []
+  return c.json({
+    id,
+    blocks: blocks.length,
+    running: liveThreads.has(id),
+    plan: plan ? { done: steps.filter((x) => x.status === 'done').length, total: steps.length } : null,
+  })
 })
 
 app.post('/api/workspace', async (c) => {
@@ -755,6 +834,7 @@ app.post('/api/agent', async (c) => {
         abortSignal: controller.signal,
       }),
     ).finally(() => {
+      liveThreads.delete(threadId)
       finished = true
       wake?.()
       wake = null
