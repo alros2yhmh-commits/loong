@@ -142,7 +142,6 @@ export interface Settings {
   provider: ProviderId
   model: string
   baseUrl: string
-  theme: 'dark' | 'light'
   soundEnabled: boolean
   volume: number
   motion: 'system' | 'full' | 'reduced'
@@ -173,7 +172,6 @@ const DEFAULTS: Settings = {
   /* the default is the light look: a white canvas with black engraving, the
      one the window is remembered by. Dark is the same ramp read backwards
      and lives one click away in Appearance. */
-  theme: 'light',
   soundEnabled: false,
   volume: 0.7,
   motion: 'system',
@@ -197,19 +195,13 @@ const DEFAULTS: Settings = {
    look there was — it is a default, not a choice. The stamp separates the two:
    a reader who PICKED dark in the new build is never overridden, but a profile
    from before the choice existed starts on the light look. */
-const KEY = 'loong.settings.v2'
-const LEGACY_KEY = 'loong.settings.v1'
+const KEY = 'loong.settings'
 
 function load(): Settings {
   if (typeof window === 'undefined') return DEFAULTS
   try {
     const raw = window.localStorage.getItem(KEY)
     if (raw) return { ...DEFAULTS, ...(JSON.parse(raw) as Partial<Settings>) }
-    const legacy = window.localStorage.getItem(LEGACY_KEY)
-    if (legacy) {
-      /* the old theme was the only option; the rest of the settings are theirs */
-      return { ...DEFAULTS, ...(JSON.parse(legacy) as Partial<Settings>), theme: DEFAULTS.theme }
-    }
     return DEFAULTS
   } catch {
     return DEFAULTS

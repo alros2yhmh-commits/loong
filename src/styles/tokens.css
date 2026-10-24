@@ -7,7 +7,7 @@
    reason a pure black-to-white interface can hold twelve distinguishable steps.
 
    Nothing in this file is a colour decision made by hand. Every value is a
-   lightness on the ramp, and both themes are derived from the same ramp.
+   lightness on the ramp, and the one look is read from it.
    --------------------------------------------------------------------------- */
 
 :root {
@@ -56,37 +56,6 @@
   --sound-throttle: 55ms;
 }
 
-/* ---- dark — black canvas, white engraving ------------------------------- */
-:root[data-theme='dark'] {
-  --canvas: var(--ink-950);
-  /* surfaces are a ramp, not one grey: the canvas, a raised block, a sunken
-     well. Three steps are what let a card read as a card without a shadow. */
-  --surface: oklch(0.215 0 0);
-  --surface-raised: oklch(0.265 0 0);
-  --surface-sunken: oklch(0.105 0 0);
-
-  --text-1: var(--ink-050);
-  --text-2: var(--ink-300);
-  /* the two faint steps were below 3:1 on the canvas — readable only if you
-     already knew what they said. Raised two steps: still quiet, now legible. */
-  --text-3: var(--ink-400);
-  --text-4: var(--ink-500);
-
-  /* hairlines are alpha over the canvas, never a solid grey. this is what
-     keeps them reading as engraved rather than as borders. */
-  --line-1: oklch(1 0 0 / 0.055);
-  --line-2: oklch(1 0 0 / 0.11);
-  --line-3: oklch(1 0 0 / 0.19);
-  --line-4: oklch(1 0 0 / 0.34);
-  --line-5: oklch(1 0 0 / 0.62);
-
-  --noise-opacity: 0.028;
-  --hatch-line: oklch(1 0 0 / 0.09);
-  --guilloche: oklch(1 0 0 / 0.16);
-  --guilloche-hot: oklch(1 0 0 / 0.42);
-  --scrim: oklch(0.085 0 0 / 0.72);
-}
-
 /* ---- light (the default) — white canvas, black engraving ----------------
    The same ramp, read the other way: the canvas is the lightest step and the
    text the darkest, so a pure white-to-black interface holds in both
@@ -96,8 +65,7 @@
    This block is :root, not a theme selector: the first paint must already be
    the right look. A default that only arrives after React mounts is the flash
    between opening the app and seeing it. */
-:root,
-[data-theme='light'] {
+:root {
   --canvas: var(--ink-000);
   --surface: oklch(0.985 0.002 75);
   --surface-raised: var(--ink-050);

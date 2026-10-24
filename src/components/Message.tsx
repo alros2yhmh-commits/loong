@@ -162,7 +162,7 @@ export const BlockView = memo(function BlockView({ block, onDecide, onAnswer, re
               className="bidi text-[1em] leading-[1.62]"
               style={{ color: 'var(--text-1)' }}
             >
-              <Clamped text={block.text} id={block.id} />
+              <Clamped text={block.text} />
             </div>
           </div>
         </motion.div>
@@ -185,11 +185,11 @@ export const BlockView = memo(function BlockView({ block, onDecide, onAnswer, re
             <div className="text-[1em] leading-[1.68]">
               {block.live ? (
                 <>
-                  <RichText text={block.text} id={block.id} />
+                  <RichText text={block.text} />
                   <span className="caret" />
                 </>
               ) : (
-                <Clamped text={block.text} id={block.id} />
+                <Clamped text={block.text} />
               )}
             </div>
           </div>

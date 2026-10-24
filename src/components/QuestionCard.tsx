@@ -83,9 +83,9 @@ export function QuestionCard({ request, answer, onAnswer }: QuestionCardProps) {
           className="bidi mt-[5px] mb-0 text-[12.5px] leading-[1.55]"
           style={{ color: 'var(--text-1)' }}
         >
-          {answer === null || answer === 'no answer'
-            ? 'no answer given'
-            : answer}
+          {/* null means the reader never answered; a literal "no answer" is a
+              real answer and is shown as one */}
+          {answer === null ? 'no answer given' : answer}
         </p>
       </motion.div>
     )
@@ -120,7 +120,7 @@ export function QuestionCard({ request, answer, onAnswer }: QuestionCardProps) {
         </p>
       </div>
 
-      <Clamped text={request.question} id={request.id} />
+      <Clamped text={request.question} />
 
       {request.detail && (
         <p

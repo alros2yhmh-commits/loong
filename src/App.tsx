@@ -601,12 +601,6 @@ const [workspace, setWorkspace] = useState<string | null>(null)
   }, [])
 
   useEffect(() => {
-    /* the theme is one attribute the token file reads; the ramp is the same
-       either way, only the direction it is read in changes */
-    document.documentElement.dataset.theme = settings.theme
-  }, [settings.theme])
-
-  useEffect(() => {
     sound.setEnabled(settings.soundEnabled)
     sound.setVolume(settings.volume)
   }, [settings.soundEnabled, settings.volume])
@@ -1192,7 +1186,6 @@ const [workspace, setWorkspace] = useState<string | null>(null)
     [
       drawer,
       settings.soundEnabled,
-      settings.theme,
       set,
       toggleSound,
       createThread,

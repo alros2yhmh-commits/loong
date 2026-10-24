@@ -28,10 +28,17 @@ export function ToolCard({ call, result }: ToolCardProps) {
   const failed = result !== undefined && !result.ok
   /* the failure is visible without opening the card: a refused tool whose
      reason lives behind a click is a failure the reader never learns about */
+  /* the row shows 150 characters; the tooltip shows the whole line — the
+     clipped copy used to be what the tooltip repeated, which told you nothing
+     you could not already read */
   const failLine = (() => {
     if (!failed || !result) return ''
     const line = (result.output ?? '').split('\n').find((l) => l.trim()) ?? ''
     return line.length > 150 ? `${line.slice(0, 150)}…` : line
+  })()
+  const failFull = (() => {
+    if (!failed || !result) return ''
+    return (result.output ?? '').split('\n').find((l) => l.trim()) ?? ''
   })()
 
   const statusColor = running
@@ -125,7 +132,7 @@ export function ToolCard({ call, result }: ToolCardProps) {
         <div
           className="mono truncate px-[10px] pb-[7px] text-[10.5px]"
           style={{ color: 'var(--text-3)' }}
-          title={failLine}
+          title={failFull}
         >
           {failLine}
         </div>

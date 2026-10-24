@@ -540,6 +540,8 @@ export function Composer({
                 <button
                   key={m.id}
                   type="button"
+                  aria-label={`Set mode to ${m.label}`}
+                  aria-pressed={mode === m.id}
                   title={
                     m.id === 'agent'
                       ? 'Agent — reads, writes and runs commands. Writes ask first unless full trust is on.'

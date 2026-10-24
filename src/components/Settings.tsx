@@ -223,6 +223,8 @@ export function Settings({
                     <button
                       key={p.id}
                       type="button"
+                      aria-label={`Select ${p.label} as the model provider`}
+                      aria-pressed={settings.provider === p.id}
                       className="ctl rounded-[6px] px-[10px] py-[5px] text-[12px]"
                       style={{
                         color:
@@ -545,19 +547,6 @@ export function Settings({
                 title="Appearance"
                 note="One warm monochrome ramp, read in either direction: white canvas with black engraving, or black canvas with white. Same twelve steps, same hairlines, no accent colour to configure."
               >
-                <Row label="Theme">
-                  <div className="flex gap-[5px]">
-                    <Chip
-                      active={settings.theme === 'light'}
-                      onClick={() => set('theme', 'light')}
-                    >
-                      Light
-                    </Chip>
-                    <Chip active={settings.theme === 'dark'} onClick={() => set('theme', 'dark')}>
-                      Dark
-                    </Chip>
-                  </div>
-                </Row>
                 <Row label="Thread text">
                   <Slider
                     value={settings.threadFontSize}

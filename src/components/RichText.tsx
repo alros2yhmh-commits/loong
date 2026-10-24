@@ -19,7 +19,7 @@ const inlineCode = {
   color: 'var(--text-2)',
 } as const
 
-export function RichText({ text }: { text: string; id: string }) {
+export function RichText({ text }: { text: string }) {
   return (
     <div className="md" dir="auto">
       <Markdown

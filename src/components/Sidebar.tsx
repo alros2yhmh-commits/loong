@@ -204,9 +204,23 @@ export function Sidebar({
       {/* the threads, by project */}
       <div className="min-h-0 flex-1 overflow-y-auto px-[6px] pb-[8px]">
         {groups.length === 0 && (
-          <p className="px-[8px] py-[10px] text-[12px]" style={{ color: 'var(--text-4)' }}>
-            {sessions.length === 0 ? 'No threads yet.' : 'Nothing matches.'}
-          </p>
+          <div className="px-[10px] py-[14px]">
+            <p className="m-0 text-[12px] leading-[1.6]" style={{ color: 'var(--text-3)' }}>
+              {sessions.length === 0
+                ? 'No threads yet. Start one and the work stays here.'
+                : 'Nothing matches.'}
+            </p>
+            {sessions.length === 0 && (
+              <button
+                type="button"
+                onClick={onNewThread}
+                className="ctl mt-[10px] rounded-[8px] px-[11px] py-[6px] text-[12px]"
+                style={{ border: '1px solid var(--line-3)', color: 'var(--text-1)' }}
+              >
+                New thread
+              </button>
+            )}
+          </div>
         )}
         {groups.map(([project, rows]) => (
           <div key={project ?? 'none'} className="mb-[6px]">

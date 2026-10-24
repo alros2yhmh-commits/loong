@@ -24,12 +24,11 @@ const CLAMP = 1400
 
 interface ClampedProps {
   text: string
-  id: string
   /** the composer and the thread already have their own sizes */
   label?: string
 }
 
-export function Clamped({ text, id, label = 'message' }: ClampedProps) {
+export function Clamped({ text, label = 'message' }: ClampedProps) {
   const [open, setOpen] = useState(false)
   const long = text.length > CLAMP
   const shown = long && !open ? text.slice(0, CLAMP) : text
@@ -50,7 +49,7 @@ export function Clamped({ text, id, label = 'message' }: ClampedProps) {
             : undefined
         }
       >
-        <RichText text={shown} id={id} />
+        <RichText text={shown} />
         {long && !open && <span style={{ opacity: 0 }}>…</span>}
       </div>
 

@@ -3,25 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="light dark" />
+    <meta name="color-scheme" content="light" />
     <title>Loong</title>
     <link rel="icon" type="image/png" href="/icon/icon-128.png" />
-    <script>
-      /* The theme is decided BEFORE the first paint. Waiting for React to read
-         localStorage means the window opens in one look and switches to the
-         other a frame later — the flash is the app telling you it was not
-         ready. :root is already the light look, so this only has to handle a
-         reader who chose dark. */
-      try {
-        var raw =
-          window.localStorage.getItem('loong.settings.v2') ||
-          window.localStorage.getItem('loong.settings.v1')
-        var theme = raw ? (JSON.parse(raw).theme || 'light') : 'light'
-        document.documentElement.setAttribute('data-theme', theme)
-      } catch (e) {
-        document.documentElement.setAttribute('data-theme', 'light')
-      }
-    </script>
+
   </head>
   <body>
     <div id="root"></div>
