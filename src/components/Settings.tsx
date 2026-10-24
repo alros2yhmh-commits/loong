@@ -6,7 +6,7 @@ import type { Health, LocalModel, RemoteModel } from '../lib/api'
 import { api } from '../lib/api'
 import { keyHas, keySet as storeKey, secureKeys } from '../lib/keys'
 import { sound } from '../lib/sound'
-import { dur, easeOut, spring } from '../motion/tokens'
+import { dur, easeOut } from '../motion/tokens'
 
 import { McpPanel } from './McpPanel'
 import { IntegrationsPanel } from './IntegrationsPanel'
@@ -113,8 +113,8 @@ export function Settings({
             }}
             initial={{ opacity: 0, y: 10, scale: 0.99 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 6, scale: 0.995 }}
-            transition={spring.drawer}
+            exit={{ opacity: 0, y: 6, scale: 0.995, transition: { duration: 0.2, ease: 'easeIn' } }}
+            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
             onMouseDown={(e) => e.stopPropagation()}
           >
             <header className="flex items-center justify-between px-[18px] py-[13px]">

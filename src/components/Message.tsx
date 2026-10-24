@@ -127,8 +127,11 @@ export const BlockView = memo(function BlockView({ block, onDecide, onAnswer, re
     case 'user':
       return (
         <motion.div {...enterBlock}>
-          <div className="py-[2px] pl-[2px]">
-            <div className="flex items-center justify-between">
+          <div className="flex justify-end">
+            <div
+              className="max-w-[70%] rounded-[16px] rounded-br-[4px] px-[14px] py-[10px]"
+              style={{ background: 'var(--bubble)' }}
+            >
               <Eyebrow>You</Eyebrow>
               {/* a run that changed files is undoable — the button sits on the
                   message that started it, not in a menu somewhere */}

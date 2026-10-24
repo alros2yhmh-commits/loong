@@ -36,6 +36,11 @@ export function Sidebar({
   onDelete,
   onFork,
   runningAgents = 0,
+  /** the persisted sidebar width — the spec stretches it 240 to 400 */
+  width = 280,
+  onResizeStart,
+  onResizeReset,
+  resizing = false,
 }: {
   sessions: Session[]
   activeId: string | null
@@ -57,6 +62,10 @@ export function Sidebar({
   onFork: (id: string) => void
   /** how many child agents are working right now — visible from anywhere */
   runningAgents?: number
+  width?: number
+  onResizeStart?: (e: React.PointerEvent) => void
+  onResizeReset?: () => void
+  resizing?: boolean
 }) {
   /* projects fold. A workspace with forty threads is a wall otherwise. */
   const [folded, setFolded] = useState<Set<string>>(new Set())
@@ -126,9 +135,23 @@ export function Sidebar({
       initial={{ x: -8, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
       transition={{ duration: dur.panel, ease: easeOut }}
-      className="flex h-full w-[248px] shrink-0 flex-col"
-      style={{ borderRight: "1px solid var(--line-1)", background: 'var(--canvas)' }}
+      className="flex h-full shrink-0 flex-col"
+      style={{ width, borderRight: "1px solid var(--line-1)", background: "var(--surface)" }}
     >
+      {/* the spec's resizable sidebar: a 4px strip on the edge, double-click to
+          snap back to 280 */}
+      {onResizeStart && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Sidebar width"
+          title="Sidebar width — drag, double-click to reset"
+          onPointerDown={onResizeStart}
+          onDoubleClick={onResizeReset}
+          className="absolute top-0 bottom-0 right-0 z-20 w-[4px] cursor-col-resize"
+          style={{ background: resizing ? 'var(--line-4)' : 'transparent' }}
+        />
+      )}
       {/* the head is a label, not a logo: the workspace is what this column is
           about, and the mark already lives in the window title */}
       <div className="flex items-center gap-[8px] px-[14px] pt-[14px] pb-[4px]">

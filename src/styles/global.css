@@ -56,8 +56,19 @@
     font-variant-ligatures: none;
   }
 
+  /* the spec's type ladder. Every size in the app is one of these, and each
+     carries its own line-height and weight — a 13px at 400 is not a 12px at 500. */
+  .t-h1 { font-size: 24px; line-height: 32px; font-weight: 700; letter-spacing: -0.02em; }
+  .t-h2 { font-size: 18px; line-height: 24px; font-weight: 600; letter-spacing: -0.015em; }
+  .t-h3 { font-size: 16px; line-height: 22px; font-weight: 600; letter-spacing: -0.01em; }
+  .t-body { font-size: 14px; line-height: 20px; font-weight: 400; }
+  .t-small { font-size: 13px; line-height: 18px; font-weight: 400; }
+  .t-caption { font-size: 12px; line-height: 16px; font-weight: 400; }
+  .t-tiny { font-size: 11px; line-height: 14px; font-weight: 500; }
+  .t-code { font-size: 13px; line-height: 18px; font-weight: 400; }
+
   ::selection {
-    background: oklch(1 0 0 / 0.22);
+    background: #f0ede8;
     color: var(--text-1);
   }
 

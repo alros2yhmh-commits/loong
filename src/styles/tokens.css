@@ -27,14 +27,25 @@
   --ink-1000: oklch(0.085 0.009 75);
 
   /* ---- geometry -------------------------------------------------------- */
+  /* the four regions of a desktop agent, from the cc-haha spec: a 40px title
+     bar, a 280px sidebar that stretches 240-400, a flexible main, and a 36px
+     status bar pinned to the bottom. The window's own minimum is 900x600. */
+  --titlebar-h: 40px;
+  --statusbar-h: 36px;
   --rail-w: 52px;
   /* 660px at 14px is 88 characters — the same measure large chat interfaces
      settle on. Measured, not guessed: 1ch = 7.47px at 14px in this stack. */
-  --thread-measure: 660px;
+  --thread-measure: 720px;
   --drawer-w: 320px;
+  /* the spec's radii: badge 4, button 8, card 12, input 12, chat input 16,
+     modal 16. They are named for what they are used on, not for a scale. */
   --radius-sm: 4px;
-  --radius-md: 7px;
-  --radius-lg: 11px;
+  --radius-btn: 8px;
+  --radius-card: 12px;
+  --radius-input: 12px;
+  --radius-chat: 16px;
+  --radius-modal: 16px;
+  --radius-lg: 12px;
   --radius-xl: 16px;
 
   /* ---- motion ---------------------------------------------------------- */
@@ -44,9 +55,17 @@
   --dur-enter: 180ms;
   --dur-panel: 240ms;
   --dur-slow: 420ms;
+  /* the spec is deliberate about direction: something entering takes longer
+     than something leaving (dropdown in 200 / out 150, modal in 250 / out 200).
+     An interface that closes as slowly as it opens feels sticky. */
+  --dur-overlay-in: 250ms;
+  --dur-overlay-out: 200ms;
+  --dur-shimmer: 1500ms;
 
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  /* easeOutExpo, the modal's curve in the spec */
+  --ease-expo: cubic-bezier(0.16, 1, 0.3, 1);
 
   /* ---- sound ----------------------------------------------------------- */
   /* gain per tier. tier 1 is the loudest sound in the app, and it is quiet. */
@@ -66,23 +85,38 @@
    the right look. A default that only arrives after React mounts is the flash
    between opening the app and seeing it. */
 :root {
-  --canvas: var(--ink-000);
-  --surface: oklch(0.985 0.002 75);
-  --surface-raised: var(--ink-050);
-  --surface-sunken: oklch(0.955 0.004 75);
+  /* ---- the cc-haha light surfaces, verbatim -------------------------- */
+  --canvas: #ffffff;          /* the app, the main column, the input */
+  --surface: #faf9f7;         /* the sidebar and the status bar */
+  --surface-raised: #ffffff;  /* a card on the canvas */
+  --surface-sunken: #f5f3ef;  /* a well, a banner, a disabled field */
+  --surface-selected: #f0ede8;/* the row you are on */
+  --surface-hover: #f5f3ef;   /* the row under the pointer */
+  --bubble: #f5f0e8;          /* the reader's message */
 
-  --text-1: var(--ink-1000);
-  --text-2: var(--ink-800);
-  --text-3: var(--ink-700);
-  --text-4: var(--ink-600);
+  --text-1: #000000;
+  --text-2: #666666;
+  --text-3: #afafaf;
+  --text-4: #afafaf;
 
-  /* hairlines are alpha over the canvas here too — a light theme drawn with
-     grey borders instead of alpha reads as a box, not as an edge. */
-  --line-1: oklch(0.145 0 0 / 0.07);
-  --line-2: oklch(0.145 0 0 / 0.13);
-  --line-3: oklch(0.145 0 0 / 0.22);
-  --line-4: oklch(0.145 0 0 / 0.38);
-  --line-5: oklch(0.145 0 0 / 0.66);
+  /* hairlines: the spec's #E5E3DE for a divider, and darker steps for the
+     edges that must be seen without being heavy. */
+  --line-1: #e5e3de;
+  --line-2: #dcd9d3;
+  --line-3: #c9c5bd;
+  --line-4: #a9a49a;
+  --line-5: #7d786e;
+
+  --btn-primary: #3d3d3d;
+  --btn-primary-hover: #2d2d2d;
+  --btn-primary-active: #1d1d1d;
+  --btn-primary-text: #ffffff;
+  --btn-disabled: #d0d0d0;
+  --btn-disabled-text: #999999;
+
+  /* the spec's overlay shadow — the only shadow in the system */
+  --shadow-overlay: 0 4px 12px rgba(0, 0, 0, 0.1);
+  --shadow-modal: 0 8px 32px rgba(0, 0, 0, 0.15);
 
   --noise-opacity: 0.016;
   --hatch-line: oklch(0.145 0 0 / 0.08);

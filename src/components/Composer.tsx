@@ -325,10 +325,10 @@ export function Composer({
         )}
 
         <div
-          className="relative rounded-[11px]"
+          className="relative rounded-[16px]"
           style={{
-            border: `1px solid ${focused ? 'var(--line-4)' : 'var(--line-2)'}`,
-            background: 'var(--surface-sunken)',
+            border: `1px solid ${focused ? 'var(--line-4)' : 'var(--line-1)'}`,
+            background: 'var(--canvas)',
             transition: `border-color ${dur.hover * 1000}ms var(--ease-out)`,
           }}
           onDragOver={(e) => e.preventDefault()}

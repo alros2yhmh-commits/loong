@@ -7,6 +7,7 @@ import { Sidebar } from './components/Sidebar'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { downloadText, threadToMarkdown, transcriptText } from './lib/export-thread'
 import { MemoryPanel } from './components/MemoryPanel'
+import { StatusBar } from './components/StatusBar'
 import { NewProjectDialog } from './components/NewProjectDialog'
 import { Resizer } from './components/Resizer'
 import { RunBar } from './components/RunBar'
@@ -101,6 +102,8 @@ const [workspace, setWorkspace] = useState<string | null>(null)
   }, [settings.provider])
 
   const railSize = useDragSize({ key: 'loong.rail.w', initial: 52, min: 46, max: 132 })
+  /* the sidebar follows the spec: 280px, and it stretches 240-400 */
+  const sidebarSize = useDragSize({ key: 'loong.sidebar.w', initial: 280, min: 240, max: 400 })
   const measure = useDragSize({
     key: 'loong.thread.w',
     initial: 660,
@@ -734,6 +737,15 @@ const [workspace, setWorkspace] = useState<string | null>(null)
     return ''
   }, [stream.blocks])
 
+  /* the plan, for the status bar — it is a block, not a stream field */
+  const planCount = useMemo(() => {
+    const planBlock = [...stream.blocks].reverse().find((b) => b.k === 'plan')
+    if (!planBlock || planBlock.k !== 'plan') return null
+    const steps = planBlock.plan.steps ?? []
+    if (!steps.length) return null
+    return { done: steps.filter((x) => x.status === 'done').length, total: steps.length }
+  }, [stream.blocks])
+
   const suggestions = useMemo(
     () => suggestionsFor(lastAssistant, { running: stream.running, mode }),
     [lastAssistant, stream.running, mode],
@@ -1345,6 +1357,10 @@ const [workspace, setWorkspace] = useState<string | null>(null)
           open={sidebarOpen}
           onToggle={() => setSidebarOpen((v) => !v)}
           onNewThread={() => void createThread()}
+          width={sidebarSize.size}
+          onResizeStart={sidebarSize.begin}
+          onResizeReset={sidebarSize.reset}
+          resizing={sidebarSize.dragging}
           onNewProject={newProject}
           onSearch={() => setPaletteOpen(true)}
           onOpenSettings={() => setSettingsOpen(true)}
@@ -1457,6 +1473,16 @@ const [workspace, setWorkspace] = useState<string | null>(null)
             editSeed={editSeed}
             prefill={prefill}
             suggestions={suggestions}
+          />
+
+          <StatusBar
+            running={stream.running}
+            phase={stream.phase}
+            mode={mode}
+            model={stream.usage?.model ?? settings.model}
+            plan={planCount}
+            workspace={workspace}
+            usage={stream.usage ?? null}
           />
 
           <AnimatePresence>
