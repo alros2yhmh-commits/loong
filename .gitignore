@@ -8,3 +8,7 @@ backups/
 shots/
 .DS_Store
 APPROVAL_PROBE.txt
+app/
+dist/
+dist-agent/
+shots/

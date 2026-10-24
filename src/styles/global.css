@@ -1,0 +1,166 @@
+@import 'tailwindcss';
+@import './tokens.css';
+
+/* ===========================================================================
+   Base.
+   =========================================================================== */
+
+* {
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--canvas);
+  color: var(--text-1);
+  font-family: 'Inter', 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: -0.005em;
+  overflow: hidden;
+  cursor: default;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Headings get the display cut: tighter, heavier. Body keeps the text cut.
+   Two cuts of one family, never one font doing both jobs. */
+h1,
+h2,
+h3,
+.display {
+  font-family: 'Inter Display', 'Inter', 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif;
+  font-weight: 500;
+  letter-spacing: -0.022em;
+  line-height: 1.25;
+  margin: 0;
+}
+
+code,
+pre,
+kbd,
+.mono {
+  font-family: 'Berkeley Mono', 'JetBrains Mono', 'Cascadia Mono', Consolas, 'SF Mono', monospace;
+  font-variant-ligatures: none;
+}
+
+::selection {
+  background: var(--selection);
+}
+
+/* ---- the type ladder -----------------------------------------------------
+   Every size in the app is one of these, and each carries its own line-height
+   and weight — a 13px at 400 is not a 12px at 500. */
+.t-h1 { font-size: 24px; line-height: 32px; font-weight: 700; letter-spacing: -0.02em; }
+.t-h2 { font-size: 18px; line-height: 24px; font-weight: 600; letter-spacing: -0.015em; }
+.t-h3 { font-size: 16px; line-height: 22px; font-weight: 600; letter-spacing: -0.01em; }
+.t-body { font-size: 14px; line-height: 20px; font-weight: 400; }
+.t-small { font-size: 13px; line-height: 18px; font-weight: 400; }
+.t-caption { font-size: 12px; line-height: 16px; font-weight: 400; }
+.t-tiny { font-size: 11px; line-height: 14px; font-weight: 500; }
+.t-code { font-size: 13px; line-height: 18px; font-weight: 400; }
+
+/* ---- interactive base ----------------------------------------------------
+   Every control gets a hover, a press and a focus ring. A control with no
+   press state feels like a label. */
+.ctl {
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-hover) var(--ease-out),
+    border-color var(--dur-hover) var(--ease-out),
+    color var(--dur-hover) var(--ease-out),
+    opacity var(--dur-hover) var(--ease-out);
+}
+.ctl:hover:not(:disabled) { background: var(--surface-hover); }
+.ctl:active:not(:disabled) { background: var(--surface-selected); }
+.ctl:disabled { cursor: default; opacity: 0.55; }
+
+.ctl:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: none;
+  border-color: var(--line-4);
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.12);
+}
+
+input,
+textarea,
+button {
+  font: inherit;
+  color: inherit;
+}
+
+/* ---- scrollbars: 6px, visible on hover only ------------------------------ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+*:hover {
+  scrollbar-color: var(--line-3) transparent;
+}
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 3px;
+}
+*:hover::-webkit-scrollbar-thumb { background: var(--line-3); }
+
+/* ---- markdown in the transcript ----------------------------------------- */
+.md > *:first-child { margin-top: 0; }
+.md > *:last-child { margin-bottom: 0; }
+.md p { margin: 0 0 12px; }
+.md h1, .md h2, .md h3, .md h4 { margin: 20px 0 8px; }
+.md ul, .md ol { margin: 0 0 12px; padding-left: 22px; }
+.md li { margin: 3px 0; }
+.md a { color: var(--text-1); text-decoration: underline; text-underline-offset: 2px; }
+.md code {
+  font-size: 0.88em;
+  padding: 1px 5px;
+  border-radius: var(--radius-badge);
+  background: var(--surface-selected);
+}
+.md pre {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-card);
+  border: 1px solid var(--line-1);
+  background: var(--surface);
+  overflow-x: auto;
+}
+.md pre code { background: none; padding: 0; font-size: var(--t-code, 13px); }
+.md blockquote {
+  margin: 0 0 12px;
+  padding: 2px 0 2px 14px;
+  border-left: 2px solid var(--line-3);
+  color: var(--text-3);
+}
+.md table { border-collapse: collapse; margin: 0 0 12px; }
+.md th, .md td { border: 1px solid var(--line-1); padding: 5px 9px; text-align: left; }
+.md hr { border: none; border-top: 1px solid var(--line-1); margin: 18px 0; }
+
+/* ---- reduced motion ------------------------------------------------------
+   A real mode, not a shorter duration: opacity only, and nothing that depends
+   on movement to be understood. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .noise { display: none; }
+}

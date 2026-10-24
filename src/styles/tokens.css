@@ -1,0 +1,113 @@
+/* ===========================================================================
+   LOONG design tokens.
+
+   Pure monochrome. The canvas is white, the ink is black, and every surface in
+   between is the SAME white separated by a hairline — a column is defined by
+   its edge, not by its shade. The only grey in the product is the selection,
+   which has to be grey precisely so it does not look like content.
+
+   The ink ladder is measured, not eyeballed: every rung is annotated with its
+   WCAG contrast ratio on white. No rung may go below 4.5:1. A previous build
+   put its faintest tier at 3.45:1 and used it for the run bar, the message
+   eyebrows and every composer chip — visible only to a reader who already knew
+   what it said. scripts/contrast.mjs enforces this; it must stay in the repo.
+   =========================================================================== */
+
+:root {
+  /* ---- surfaces: all white, separated by hairlines ---------------------- */
+  --canvas: #ffffff;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-sunken: #ffffff;
+  --surface-selected: #f2f2f2;
+  --surface-hover: #f7f7f7;
+  /* the one grey that is allowed to be grey */
+  --selection: #d9d9d9;
+
+  /* ---- ink: 21.0 · 12.6 · 8.6 · 5.9 ------------------------------------- */
+  --text-1: #000000;
+  --text-2: #2e2e2e;
+  --text-3: #4a4a4a;
+  --text-4: #5f5f5f;
+
+  /* ---- hairlines: black at five alphas ---------------------------------- */
+  --line-1: rgba(0, 0, 0, 0.11);
+  --line-2: rgba(0, 0, 0, 0.18);
+  --line-3: rgba(0, 0, 0, 0.24);
+  --line-4: rgba(0, 0, 0, 0.42);
+  --line-5: rgba(0, 0, 0, 0.72);
+
+  /* ---- controls --------------------------------------------------------- */
+  --btn-primary: #000000;
+  --btn-primary-hover: #2d2d2d;
+  --btn-primary-active: #1d1d1d;
+  --btn-primary-text: #ffffff;
+  --btn-disabled: #d0d0d0;
+  --btn-disabled-text: #999999;
+
+  /* ---- the only two shadows in the system ------------------------------- */
+  --shadow-overlay: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-modal: 0 8px 32px rgba(0, 0, 0, 0.12);
+
+  /* ---- geometry --------------------------------------------------------- */
+  /* the four regions of a desktop agent: a 40px title bar, a 280px sidebar
+     that stretches 240-400, a flexible main, and a 36px status bar */
+  --titlebar-h: 40px;
+  --statusbar-h: 36px;
+  --rail-w: 52px;
+  /* 720px at 14px is the conversation's measure */
+  --thread-measure: 720px;
+  --radius-badge: 4px;
+  --radius-btn: 8px;
+  --radius-card: 12px;
+  --radius-input: 12px;
+  --radius-chat: 16px;
+  --radius-modal: 16px;
+
+  /* ---- motion -----------------------------------------------------------
+     Entering is slower than leaving, on purpose: something arriving deserves
+     attention and something leaving should not hold the door. */
+  --dur-press: 90ms;
+  --dur-hover: 140ms;
+  --dur-enter: 180ms;
+  --dur-panel: 240ms;
+  --dur-overlay-in: 250ms;
+  --dur-overlay-out: 200ms;
+  --dur-shimmer: 1500ms;
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-expo: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* ---- texture ---------------------------------------------------------- */
+  --noise-opacity: 0.022;
+}
+
+/* A hairline engraved into the surface: the top edge catches the light and the
+   bottom edge keeps a shadow, which is what makes it read as cut rather than
+   printed. Two gradients, no image. */
+.rule-engraved {
+  height: 1px;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--text-1) 14%, transparent),
+    color-mix(in srgb, var(--text-1) 5%, transparent)
+  );
+}
+
+/* A micro-grain over the whole window. It is the difference between a surface
+   and a screen, and at 2.2% it is felt rather than seen. */
+.noise {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: var(--noise-opacity);
+  background-image: repeating-conic-gradient(
+    from 0deg at 50% 50%,
+    rgba(0, 0, 0, 0.9) 0deg 0.6deg,
+    transparent 0.6deg 1.4deg
+  );
+  background-size: 3px 3px;
+  mix-blend-mode: multiply;
+}
