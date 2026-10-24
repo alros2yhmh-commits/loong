@@ -117,12 +117,9 @@ interface BlockViewProps {
   block: Block
   onDecide: (id: string, d: ApprovalDecision) => void
   onAnswer: (id: string, answer: string | null) => void
-  /** user turns whose run changed files — each maps to the run that undoes it */
-  rewindTargets?: Record<string, string>
-  onRewind?: (runId: string) => void
 }
 
-export const BlockView = memo(function BlockView({ block, onDecide, onAnswer, rewindTargets, onRewind }: BlockViewProps) {
+export const BlockView = memo(function BlockView({ block, onDecide, onAnswer }: BlockViewProps) {
   switch (block.k) {
     case 'user':
       return (
@@ -133,19 +130,6 @@ export const BlockView = memo(function BlockView({ block, onDecide, onAnswer, re
               style={{ background: 'var(--bubble)' }}
             >
               <Eyebrow>You</Eyebrow>
-              {/* a run that changed files is undoable — the button sits on the
-                  message that started it, not in a menu somewhere */}
-              {rewindTargets?.[block.id] && onRewind && (
-                <button
-                  type="button"
-                  className="ctl rounded-[5px] px-[7px] py-[2px] text-[10.5px]"
-                  style={{ border: '1px solid var(--line-2)', color: 'var(--text-4)' }}
-                  onClick={() => onRewind(rewindTargets[block.id])}
-                  title="Undo everything this run changed — the files go back exactly as they were"
-                >
-                  Rewind this run
-                </button>
-              )}
             </div>
             {block.images && block.images.length > 0 && (
               <div className="mb-[8px] flex flex-wrap gap-[6px]">

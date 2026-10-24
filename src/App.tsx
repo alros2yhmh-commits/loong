@@ -782,18 +782,6 @@ const [workspace, setWorkspace] = useState<string | null>(null)
 
   /* checkpoints arrive newest-first; user messages happen oldest-first — zip
      them so each rewind button sits on the run it undoes */
-
-  const rewindTargets = useMemo(() => {
-    const oldestFirst = [...checkpoints].reverse()
-    const userIds: string[] = []
-    for (const b of stream.blocks) if (b.k === 'user') userIds.push(b.id)
-    const map: Record<string, string> = {}
-    oldestFirst.forEach((cp, i) => {
-      if (userIds[i]) map[userIds[i]] = cp.runId
-    })
-    return map
-  }, [checkpoints, stream.blocks])
-
   const rewind = useCallback(
     async (runId: string) => {
       try {
@@ -1300,8 +1288,6 @@ const [workspace, setWorkspace] = useState<string | null>(null)
           resizing={which === 'primary' && measure.dragging}
           grips={which === 'primary'}
           pinTail={isFocused ? pinTail : 0}
-          rewindTargets={s === stream ? rewindTargets : undefined}
-          onRewind={rewind}
           onRewindRun={() => {
             const last = checkpoints[0]
             if (last) void rewind(last.runId)
@@ -1411,12 +1397,6 @@ const [workspace, setWorkspace] = useState<string | null>(null)
                 historyChars={historyChars}
                 budgetChars={HISTORY_BUDGET}
                 cost={cost}
-                onRewind={() => {
-                  const last = checkpoints[0]
-                  if (last) void rewind(last.runId)
-                }}
-                canRewind={checkpoints.length > 0}
-                trust={settings.trust}
               />
             </div>
           )}

@@ -85,38 +85,44 @@
    the right look. A default that only arrives after React mounts is the flash
    between opening the app and seeing it. */
 :root {
-  /* ---- the cc-haha light surfaces, verbatim -------------------------- */
-  --canvas: #ffffff;          /* the app, the main column, the input */
-  --surface: #faf9f7;         /* the sidebar and the status bar */
-  --surface-raised: #ffffff;  /* a card on the canvas */
-  --surface-sunken: #f5f3ef;  /* a well, a banner, a disabled field */
-  --surface-selected: #f0ede8;/* the row you are on */
-  --surface-hover: #f5f3ef;   /* the row under the pointer */
-  --bubble: #f5f0e8;          /* the reader's message */
+  /* ---- pure monochrome -------------------------------------------------
+     No warm greys, no tinted surfaces. The canvas is white, the ink is black,
+     and every surface in between is the SAME white separated by a hairline —
+     a column is defined by its edge, not by its shade. The one grey in the
+     system is the selection, which has to be grey precisely so it does not
+     look like content: it marks, it does not become. */
+  --canvas: #ffffff;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-sunken: #ffffff;
+  --surface-selected: #f2f2f2;
+  --surface-hover: #f7f7f7;
+  --bubble: #ffffff;
+  /* the one grey that is allowed to be grey */
+  --selection: #d9d9d9;
 
   --text-1: #000000;
-  --text-2: #666666;
-  --text-3: #afafaf;
-  --text-4: #afafaf;
+  --text-2: #3d3d3d;
+  --text-3: #6b6b6b;
+  --text-4: #8a8a8a;
 
-  /* hairlines: the spec's #E5E3DE for a divider, and darker steps for the
-     edges that must be seen without being heavy. */
-  --line-1: #e5e3de;
-  --line-2: #dcd9d3;
-  --line-3: #c9c5bd;
-  --line-4: #a9a49a;
-  --line-5: #7d786e;
+  /* hairlines are black at low alpha: an edge you can see without a border
+     you can feel. five steps, from a whisper to a rule. */
+  --line-1: rgba(0, 0, 0, 0.07);
+  --line-2: rgba(0, 0, 0, 0.13);
+  --line-3: rgba(0, 0, 0, 0.24);
+  --line-4: rgba(0, 0, 0, 0.42);
+  --line-5: rgba(0, 0, 0, 0.72);
 
-  --btn-primary: #3d3d3d;
+  --btn-primary: #000000;
   --btn-primary-hover: #2d2d2d;
   --btn-primary-active: #1d1d1d;
   --btn-primary-text: #ffffff;
   --btn-disabled: #d0d0d0;
   --btn-disabled-text: #999999;
 
-  /* the spec's overlay shadow — the only shadow in the system */
-  --shadow-overlay: 0 4px 12px rgba(0, 0, 0, 0.1);
-  --shadow-modal: 0 8px 32px rgba(0, 0, 0, 0.15);
+  --shadow-overlay: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-modal: 0 8px 32px rgba(0, 0, 0, 0.12);
 
   --noise-opacity: 0.016;
   --hatch-line: oklch(0.145 0 0 / 0.08);

@@ -28,8 +28,6 @@ interface ThreadProps {
   onResizeReset: () => void
   resizing: boolean
   /** which user turns can be undone, by run id */
-  rewindTargets?: Record<string, string>
-  onRewind?: (runId: string) => void
   /** a turn is in flight — the summary waits until it settles */
   running?: boolean
   /** undo the whole last run, from the summary */
@@ -146,8 +144,6 @@ export function Thread({
   onResizeStart,
   onResizeReset,
   resizing,
-  rewindTargets,
-  onRewind,
   running = false,
   onRewindRun,
   canRewindRun = false,
@@ -322,8 +318,6 @@ export function Thread({
                   block={group.block}
                   onDecide={onDecide}
                   onAnswer={onAnswer}
-                  rewindTargets={rewindTargets}
-                  onRewind={onRewind}
                 />
               </div>
             )
@@ -352,8 +346,8 @@ export function Thread({
                         block={it.block}
                         onDecide={onDecide}
                         onAnswer={onAnswer}
-                        rewindTargets={rewindTargets}
-                        onRewind={onRewind}
+                        
+                        
                       />
                     </div>
                   ))}
@@ -371,8 +365,6 @@ export function Thread({
                   block={only.block}
                   onDecide={onDecide}
                   onAnswer={onAnswer}
-                  rewindTargets={rewindTargets}
-                  onRewind={onRewind}
                 />
               </div>
             )
@@ -403,8 +395,8 @@ export function Thread({
                     block={it.block}
                     onDecide={onDecide}
                     onAnswer={onAnswer}
-                    rewindTargets={rewindTargets}
-                    onRewind={onRewind}
+                    
+                    
                   />
                 </div>
               ))}

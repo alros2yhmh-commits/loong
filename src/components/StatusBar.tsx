@@ -58,14 +58,14 @@ export function StatusBar({
         {running ? (
           <motion.span
             className="inline-block h-[6px] w-[6px] rounded-full"
-            style={{ background: '#ca8a04' }}
+            style={{ background: 'var(--text-1)' }}
             animate={{ opacity: [1, 0.25, 1] }}
             transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
           />
         ) : (
           <span
             className="inline-block h-[6px] w-[6px] rounded-full"
-            style={{ background: '#cccccc' }}
+            style={{ background: 'var(--line-3)' }}
           />
         )}
         <span className="t-tiny" style={{ color: 'var(--text-2)' }}>

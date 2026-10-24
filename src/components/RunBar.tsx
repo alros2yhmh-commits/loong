@@ -41,8 +41,6 @@ interface RunBarProps {
   /** what the last run cost, when the model's price is known */
   cost: string | null
   /** a run that changed files can be undone, as a unit */
-  onRewind: () => void
-  canRewind: boolean
   /** the trust level this run is using — full trust is stated, not implied */
   trust?: 'ask' | 'auto'
 }
@@ -55,8 +53,6 @@ export function RunBar({
   historyChars,
   budgetChars,
   cost,
-  onRewind,
-  canRewind,
   trust = 'ask',
 }: RunBarProps) {
   const [open, setOpen] = useState(false)
@@ -134,19 +130,6 @@ export function RunBar({
           <span className="hidden shrink-0 sm:inline" style={{ color: 'var(--text-4)' }}>
             {cost}
           </span>
-        )}
-
-        {/* the undo for a whole run, one click, from the bar that watches it */}
-        {canRewind && (
-          <button
-            type="button"
-            className="ctl shrink-0 rounded-[5px] px-[6px] py-[1px]"
-            style={{ border: '1px solid var(--line-2)' }}
-            onClick={onRewind}
-            title="Put every file the last run changed back the way it was"
-          >
-            Rewind
-          </button>
         )}
 
         {/* the trust level of this run — stated, not implied.

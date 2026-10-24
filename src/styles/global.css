@@ -68,7 +68,7 @@
   .t-code { font-size: 13px; line-height: 18px; font-weight: 400; }
 
   ::selection {
-    background: #f0ede8;
+    background: var(--selection);
     color: var(--text-1);
   }
 
