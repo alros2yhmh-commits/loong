@@ -101,15 +101,19 @@
   /* the one grey that is allowed to be grey */
   --selection: #d9d9d9;
 
-  --text-1: #000000;
-  --text-2: #3d3d3d;
-  --text-3: #6b6b6b;
-  --text-4: #8a8a8a;
+  /* The ink ladder is measured, not eyeballed: every rung clears WCAG AA on
+     white (4.5:1 for body, 3:1 for large). The faintest tier used to sit at
+     3.45:1 — visible only if you already knew what it said — which is exactly
+     what a reader who cannot see well does not have. */
+  --text-1: #000000;   /* 21.0:1 */
+  --text-2: #2e2e2e;   /* 12.6:1 */
+  --text-3: #4a4a4a;   /*  8.6:1 */
+  --text-4: #5f5f5f;   /*  5.9:1 */
 
   /* hairlines are black at low alpha: an edge you can see without a border
      you can feel. five steps, from a whisper to a rule. */
-  --line-1: rgba(0, 0, 0, 0.07);
-  --line-2: rgba(0, 0, 0, 0.13);
+  --line-1: rgba(0, 0, 0, 0.11);
+  --line-2: rgba(0, 0, 0, 0.18);
   --line-3: rgba(0, 0, 0, 0.24);
   --line-4: rgba(0, 0, 0, 0.42);
   --line-5: rgba(0, 0, 0, 0.72);

@@ -545,7 +545,7 @@ export function Settings({
               <Section
                 id="appearance"
                 title="Appearance"
-                note="One warm monochrome ramp, read in either direction: white canvas with black engraving, or black canvas with white. Same twelve steps, same hairlines, no accent colour to configure."
+                note="One warm monochrome ramp, twelve perceptually even steps, the same hairlines everywhere, and no accent colour to configure. Every surface is white and the ink is black — the only grey in the app is the selection, which is grey so it marks a region without becoming content."
               >
                 <Row label="Thread text">
                   <Slider
