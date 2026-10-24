@@ -72,7 +72,6 @@ export function PlanBlock({ plan }: PlanBlockProps) {
             animate={{ rotate: open ? 90 : 0 }}
             transition={{ duration: dur.hover, ease: easeOut }}
           >
-            ›
           </motion.span>
         </button>
 

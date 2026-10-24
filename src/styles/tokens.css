@@ -56,8 +56,7 @@
   --sound-throttle: 55ms;
 }
 
-/* ---- dark (default) — black canvas, white engraving --------------------- */
-:root,
+/* ---- dark — black canvas, white engraving ------------------------------- */
 [data-theme='dark'] {
   --canvas: var(--ink-950);
   /* surfaces are a ramp, not one grey: the canvas, a raised block, a sunken
@@ -88,21 +87,26 @@
   --scrim: oklch(0.085 0 0 / 0.72);
 }
 
-/* ---- light — white canvas, black engraving -------------------------------
+/* ---- light (the default) — white canvas, black engraving ----------------
    The same ramp, read the other way: the canvas is the lightest step and the
    text the darkest, so a pure white-to-black interface holds in both
    directions. Nothing here is a second palette; every value is a step on the
-   ramp above, mirrored. */
+   ramp above, mirrored.
+
+   This block is :root, not a theme selector: the first paint must already be
+   the right look. A default that only arrives after React mounts is the flash
+   between opening the app and seeing it. */
+:root,
 [data-theme='light'] {
   --canvas: var(--ink-000);
   --surface: oklch(0.985 0.002 75);
   --surface-raised: var(--ink-050);
   --surface-sunken: oklch(0.955 0.004 75);
 
-  --text-1: var(--ink-950);
-  --text-2: var(--ink-700);
-  --text-3: var(--ink-600);
-  --text-4: var(--ink-500);
+  --text-1: var(--ink-1000);
+  --text-2: var(--ink-800);
+  --text-3: var(--ink-700);
+  --text-4: var(--ink-600);
 
   /* hairlines are alpha over the canvas here too — a light theme drawn with
      grey borders instead of alpha reads as a box, not as an edge. */

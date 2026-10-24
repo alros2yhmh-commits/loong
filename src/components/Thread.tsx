@@ -338,10 +338,9 @@ export function Thread({
             return (
               <details key={key} className="group/thoughts" style={{ opacity: zen ? 0.3 : 1 }}>
                 <summary
-                  className="mono flex cursor-pointer list-none items-center gap-[7px] text-[10px] tracking-[0.06em] uppercase select-none"
+                  className="mono flex cursor-pointer list-none items-center gap-[7px] text-[11px] tracking-[0.06em] uppercase select-none"
                   style={{ color: 'var(--text-4)' }}
                 >
-                  <span className="inline-block transition-transform group-open/thoughts:rotate-90">›</span>
                   <span>
                     {group.items.length} thoughts · {(chars / 1000).toFixed(1)}k chars
                   </span>
@@ -392,7 +391,7 @@ export function Thread({
               style={{ borderLeft: '1px solid var(--line-2)' }}
             >
               <div
-                className="mono flex items-center gap-[7px] text-[10px] tracking-[0.06em] uppercase"
+                className="mono flex items-center gap-[7px] text-[11px] tracking-[0.06em] uppercase"
                 style={{ color: 'var(--text-4)' }}
               >
                 <span>{group.items.length} tools</span>

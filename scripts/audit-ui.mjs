@@ -153,7 +153,7 @@ await sleep(400)
 await page.keyboard.type('settings')
 await sleep(400)
 await page.keyboard.press('Enter')
-await sleep(900)
+await sleep(1600)
 {
   await shot('03-settings')
   await shot('03-settings')

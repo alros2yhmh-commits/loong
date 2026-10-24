@@ -29,7 +29,7 @@ function Row({ node, depth }: { node: Node; depth: number }) {
           className="mono text-[10px]"
           style={{ color: 'var(--text-4)', width: 9 }}
         >
-          {node.dir ? (open ? '▾' : '▸') : ''}
+          {node.dir ? (open ? '-' : '+') : ''}
         </span>
         <span
           className="mono min-w-0 flex-1 truncate text-[10.5px]"

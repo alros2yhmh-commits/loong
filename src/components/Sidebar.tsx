@@ -30,6 +30,7 @@ export function Sidebar({
   onNewProject,
   onSearch,
   onOpenSettings,
+  onOpenMemory,
   soundOn,
   onToggleSound,
   onSelect,
@@ -49,6 +50,8 @@ export function Sidebar({
   onNewProject: () => void
   onSearch: () => void
   onOpenSettings: () => void
+  /** memory is a place, not a preference — it opens its own panel */
+  onOpenMemory: () => void
   soundOn: boolean
   onToggleSound: () => void
   onSelect: (s: Session) => void
@@ -134,7 +137,7 @@ export function Sidebar({
           about, and the mark already lives in the window title */}
       <div className="flex items-center gap-[8px] px-[14px] pt-[14px] pb-[4px]">
         <span
-          className="mono flex-1 text-[10px] tracking-[0.14em] uppercase"
+          className="mono flex-1 text-[11px] tracking-[0.14em] uppercase"
           style={{ color: 'var(--text-4)' }}
         >
           Workspace
@@ -172,7 +175,7 @@ export function Sidebar({
         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
           <path d="M2 4.5h12M2 8h12M2 11.5h12" stroke="var(--text-4)" strokeWidth="1.3" strokeLinecap="round" />
         </svg>
-        <span className="mono flex-1 text-[10px] tracking-[0.14em] uppercase" style={{ color: 'var(--text-4)' }}>
+        <span className="mono flex-1 text-[11px] tracking-[0.14em] uppercase" style={{ color: 'var(--text-4)' }}>
           Projects
         </span>
         <button
@@ -227,7 +230,7 @@ export function Sidebar({
                 </svg>
               </motion.span>
               <span
-                className="mono text-[10px] tracking-[0.08em] uppercase"
+                className="mono text-[11px] tracking-[0.08em] uppercase"
                 style={{ color: 'var(--text-4)' }}
               >
                 {project ?? 'no project'} · {rows.length}
@@ -264,7 +267,7 @@ export function Sidebar({
             animate={{ opacity: [0.3, 1, 0.3] }}
             transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
           />
-          <span className="mono text-[10.5px]" style={{ color: 'var(--text-3)' }}>
+          <span className="mono text-[12.5px]" style={{ color: 'var(--text-3)' }}>
             {runningAgents} {runningAgents === 1 ? 'agent' : 'agents'} working
           </span>
         </div>
@@ -275,7 +278,7 @@ export function Sidebar({
       <footer className="mt-auto flex flex-col gap-[2px] px-[8px] py-[9px]" style={{ borderTop: '1px solid var(--line-1)' }}>
         <button
           type="button"
-          onClick={onOpenSettings}
+          onClick={onOpenMemory}
           className="ctl flex items-center gap-[9px] rounded-[8px] px-[10px] py-[6px] text-left text-[12.5px]"
           style={{ color: 'var(--text-2)' }}
         >

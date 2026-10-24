@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useState } from 'react'
 import { PROVIDERS, useSettings, type ProviderId, type SavedCommand } from '../lib/settings'
 import { isWeakModel } from '../lib/router'
 import type { Health, LocalModel, RemoteModel } from '../lib/api'
@@ -7,7 +7,7 @@ import { api } from '../lib/api'
 import { keyHas, keySet as storeKey, secureKeys } from '../lib/keys'
 import { sound } from '../lib/sound'
 import { dur, easeOut, spring } from '../motion/tokens'
-import { IconChevron } from './Icons'
+
 import { McpPanel } from './McpPanel'
 import { IntegrationsPanel } from './IntegrationsPanel'
 import { SkillsPanel, LibraryPanel } from './InventoryPanel'
@@ -41,13 +41,10 @@ export function Settings({
   const { settings, set, provider, reset } = useSettings()
   const localModels = models.filter((m) => m.name)
   /* the key never comes back from wherever it lives — only whether it exists */
+  /* one pane at a time: the nav names the section, the body shows it */
+  const [active, setActive] = useState('appearance')
   const [keyDraft, setKeyDraft] = useState('')
   const [keyExists, setKeyExists] = useState(false)
-  /* what the agent kept between sessions — shown so it can be inspected and
-     deleted; memory you cannot see is memory you cannot trust */
-  const [memory, setMemory] = useState<
-    { id: string; text: string; workspace: string | null; at: number }[]
-  >([])
   /* a search box over the (long) OpenRouter catalogue so a model can be found
      without scrolling a hundred-row dropdown */
   const [modelQuery, setModelQuery] = useState('')
@@ -74,14 +71,6 @@ export function Settings({
       alive = false
     }
   }, [settings.provider])
-
-  useEffect(() => {
-    if (!open) return
-    void api
-      .memory()
-      .then((r) => setMemory(r.entries ?? []))
-      .catch(() => setMemory([]))
-  }, [open])
 
   useEffect(() => {
     let alive = true
@@ -117,7 +106,7 @@ export function Settings({
           onMouseDown={onClose}
         >
           <motion.div
-            className="flex max-h-[82vh] w-[620px] flex-col overflow-hidden rounded-[14px]"
+            className="flex h-[76vh] w-[880px] max-w-[94vw] flex-col overflow-hidden rounded-[14px]"
             style={{
               background: 'var(--canvas)',
               border: '1px solid var(--line-4)',
@@ -142,33 +131,38 @@ export function Settings({
 
             <div className="rule-engraved" />
 
-            {/* grouped jumps, not one long row: the everyday settings are
-                reachable in one glance, the exotic ones are still reachable */}
+            {/* the rail and the pane are one row inside the dialog's column.
+                Without the wrapper they stack: a 196px rail, then a pane pushed
+                below the fold — which is what an empty settings screen looks
+                like. */}
+            <div className="flex min-h-0 flex-1">
+            {/* the rail: groups of settings, one pane shown at a time. */}
             <nav
-              className="flex flex-wrap items-center gap-x-[10px] gap-y-[5px] px-[18px] py-[8px]"
-              style={{ borderBottom: '1px solid var(--line-1)' }}
+              className="flex w-[196px] shrink-0 flex-col gap-[2px] overflow-y-auto px-[10px] py-[12px]"
+              style={{ borderRight: '1px solid var(--line-1)' }}
             >
-              {/* grouped by the reader's mental model, not by which module
-                  owns the setting. A wall of sixteen chips made every screen
-                  equally far away; four groups make the everyday ones close. */}
               {[
                 ['Everyday', [['appearance', 'Look'], ['sound', 'Sound'], ['motion', 'Motion']]],
                 ['Model', [['runtime', 'Runtime'], ['provider', 'Model'], ['router', 'Router']]],
-                ['Agent', [['memory', 'Memory'], ['skills', 'Skills'], ['library', 'Library'], ['timers', 'Timers']]],
+                ['Agent', [['skills', 'Skills'], ['library', 'Library'], ['timers', 'Timers']]],
                 ['Power', [['integrations', 'Integrations'], ['mcp', 'MCP'], ['autonomy', 'Autonomy'], ['commands', 'Commands']]],
                 ['Desk', [['layout', 'Layout'], ['analytics', 'Analytics'], ['about', 'About']]],
               ].map(([group, items]) => (
-                <div key={group as string} className="flex items-center gap-[5px]">
-                  <span className="mono text-[10px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-4)' }}>
+                <div key={group as string} className="mb-[8px]">
+                  <p className="mono m-0 px-[8px] pb-[4px] text-[10px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-4)' }}>
                     {group as string}
-                  </span>
+                  </p>
                   {(items as [string, string][]).map(([id, label]) => (
                     <button
                       key={id}
                       type="button"
-                      className="ctl rounded-[5px] px-[7px] py-[3px] text-[10.5px]"
-                      style={{ border: '1px solid var(--line-2)', color: 'var(--text-3)' }}
-                      onClick={() => document.getElementById(id)?.scrollIntoView({ block: 'start' })}
+                      className="ctl w-full rounded-[7px] px-[9px] py-[6px] text-left text-[12.5px]"
+                      style={{
+                        color: active === id ? 'var(--text-1)' : 'var(--text-3)',
+                        background: active === id ? 'var(--surface)' : 'transparent',
+                        border: active === id ? '1px solid var(--line-2)' : '1px solid transparent',
+                      }}
+                      onClick={() => setActive(id)}
                     >
                       {label}
                     </button>
@@ -178,6 +172,7 @@ export function Settings({
             </nav>
 
             <div className="min-h-0 flex-1 overflow-y-auto">
+              <PaneContext.Provider value={active}>
               <Section
                 id="runtime"
                 title="Runtime"
@@ -748,84 +743,14 @@ export function Settings({
               >
                 <McpPanel />
               </Section>
-
-              <Section
-                id="memory"
-                title="Memory"
-                note="Facts the agent kept across sessions — this project first, then the ones that are true everywhere. Delete one and it is gone for good."
-              >
-                {memory.length === 0 ? (
-                  <p className="m-0 px-[2px] py-[6px] text-[12px]" style={{ color: 'var(--text-4)' }}>
-                    Nothing saved yet. The agent writes here when you tell it to remember something.
-                  </p>
-                ) : (
-                  (() => {
-                    const projectName = (ws: string | null) =>
-                      ws ? ws.split(/[\\/]/).filter(Boolean).pop() ?? ws : null
-                    const ago = (at: number) => {
-                      const d = Math.round((Date.now() - at) / 86_400_000)
-                      if (d <= 0) return 'today'
-                      if (d === 1) return 'yesterday'
-                      if (d < 30) return `${d} days ago`
-                      return new Date(at).toLocaleDateString()
-                    }
-                    const mine = memory.filter((m) => m.workspace !== null)
-                    const world = memory.filter((m) => m.workspace === null)
-                    const group = (label: string, rows: typeof memory) =>
-                      rows.length === 0 ? null : (
-                        <div className="flex flex-col gap-[6px]">
-                          <p
-                            className="mono m-0 text-[10px] tracking-[0.1em] uppercase"
-                            style={{ color: 'var(--text-4)' }}
-                          >
-                            {label} · {rows.length}
-                          </p>
-                          {rows.map((m) => (
-                            <div
-                              key={m.id}
-                              className="group flex items-start gap-[10px] rounded-[7px] px-[9px] py-[7px]"
-                              style={{ border: '1px solid var(--line-2)', background: 'var(--surface-sunken)' }}
-                            >
-                              <div className="min-w-0 flex-1">
-                                <p className="m-0 text-[12.5px] leading-[1.5]" style={{ color: 'var(--text-1)' }}>
-                                  {m.text}
-                                </p>
-                                <p className="mono m-0 mt-[3px] text-[10px]" style={{ color: 'var(--text-4)' }}>
-                                  {m.workspace === null ? 'everywhere' : `project · ${projectName(m.workspace)}`} · {ago(m.at)}
-                                </p>
-                              </div>
-                              <button
-                                type="button"
-                                className="ctl shrink-0 rounded-[5px] px-[7px] py-[3px] text-[10.5px] opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus:opacity-100"
-                                style={{ border: '1px solid var(--line-2)', color: 'var(--text-3)' }}
-                                title="Delete this fact"
-                                onClick={() => {
-                                  void api
-                                    .forgetMemory(m.id)
-                                    .then(() => setMemory((prev) => prev.filter((x) => x.id !== m.id)))
-                                }}
-                              >
-                                forget
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )
-                    return (
-                      <div className="flex flex-col gap-[14px]">
-                        {group('This project', mine)}
-                        {group('Everywhere', world)}
-                      </div>
-                    )
-                  })()
-                )}
-              </Section>
+              </PaneContext.Provider>
+            </div>
             </div>
 
             <div className="rule-engraved" />
             <footer className="px-[18px] py-[10px]">
               <p className="mono m-0 text-[10.5px]" style={{ color: 'var(--text-4)' }}>
-                Loong (龙) 0.1.0 · built by Professor Hamza Mahmoud Ramadan
+                Loong (龙) 1.0.0 · built by Professor Hamza Mahmoud Ramadan
               </p>
               <p className="mono m-0 mt-[2px] text-[10px]" style={{ color: 'var(--text-5)' }}>
                 agent {health ? 'connected' : 'not running'} · the key stays in this process, never in the browser
@@ -1016,6 +941,14 @@ function AutonomyPanel() {
   )
 }
 
+/**
+ * One settings pane. In a two-column layout the section IS the page — the
+ * collapsible header was a way to survive a single long scroll, and there is
+ * no long scroll any more. The nav names it; this shows it.
+ */
+/* the pane the body should show — Section reads it and renders only itself */
+const PaneContext = createContext<string>('appearance')
+
 function Section({
   id,
   title,
@@ -1027,46 +960,17 @@ function Section({
   note: string
   children: React.ReactNode
 }) {
-  const [open, setOpen] = useState(true)
+  const pane = useContext(PaneContext)
+  if (id && pane !== id) return null
   return (
-    <section id={id} style={{ borderBottom: '1px solid var(--line-1)', scrollMarginTop: 8 }}>
-      <button
-        type="button"
-        className="flex w-full items-center gap-[8px] px-[18px] pt-[14px] pb-[6px] text-left"
-        onClick={() => setOpen((v) => !v)}
-      >
-        <motion.span
-          animate={{ rotate: open ? 90 : 0 }}
-          transition={{ duration: dur.hover, ease: easeOut }}
-          style={{ color: 'var(--text-4)', display: 'grid', placeItems: 'center' }}
-        >
-          <IconChevron size={12} />
-        </motion.span>
-        <span className="text-[12.5px]" style={{ color: 'var(--text-1)' }}>
-          {title}
-        </span>
-      </button>
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: dur.panel, ease: easeOut }}
-            style={{ overflow: 'hidden' }}
-          >
-            <div className="px-[18px] pb-[16px]">
-              <p
-                className="mb-[12px] text-[11.5px] leading-[1.62]"
-                style={{ color: 'var(--text-4)' }}
-              >
-                {note}
-              </p>
-              {children}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+    <section data-section={id ?? ''} className="px-[24px] pt-[18px] pb-[26px]">
+      <h3 className="display m-0 text-[15px]" style={{ color: 'var(--text-1)' }}>
+        {title}
+      </h3>
+      <p className="mt-[4px] mb-[16px] text-[12px] leading-[1.6]" style={{ color: 'var(--text-3)' }}>
+        {note}
+      </p>
+      {children}
     </section>
   )
 }

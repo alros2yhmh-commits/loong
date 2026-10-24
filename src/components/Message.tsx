@@ -140,7 +140,7 @@ export const BlockView = memo(function BlockView({ block, onDecide, onAnswer, re
                   onClick={() => onRewind(rewindTargets[block.id])}
                   title="Undo everything this run changed — the files go back exactly as they were"
                 >
-                  ⤺ rewind this run
+                  Rewind this run
                 </button>
               )}
             </div>

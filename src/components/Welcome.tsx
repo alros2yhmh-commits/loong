@@ -104,7 +104,6 @@ export function Welcome({
               </span>
             </span>
             <span className="mono text-[11px]" style={{ color: 'var(--text-3)' }}>
-              →
             </span>
           </button>
 
@@ -126,7 +125,6 @@ export function Welcome({
               </span>
             </span>
             <span className="mono text-[11px]" style={{ color: 'var(--text-3)' }}>
-              →
             </span>
           </button>
         </div>

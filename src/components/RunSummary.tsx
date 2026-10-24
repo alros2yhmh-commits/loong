@@ -224,7 +224,7 @@ export function RunSummary({
                         className="mono w-[13px] shrink-0 text-[10px]"
                         style={{ color: s.ok ? 'var(--text-4)' : 'var(--text-1)' }}
                       >
-                        {s.live ? '›' : s.ok ? '✓' : '×'}
+                        {s.live ? '·' : s.ok ? '✓' : '×'}
                       </span>
                       <span
                         className="mono w-[128px] shrink-0 truncate text-[10.5px]"
@@ -289,7 +289,7 @@ export function RunSummary({
                   style={{ border: '1px solid var(--line-2)', color: 'var(--text-3)' }}
                   onClick={onRewind}
                 >
-                  ⤺ put these files back
+                  Put these files back
                 </button>
               )}
             </div>

@@ -8,6 +8,7 @@ import { Sidebar } from './components/Sidebar'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { downloadText, threadToMarkdown, transcriptText } from './lib/export-thread'
 import { FilesPanel } from './components/FilesPanel'
+import { MemoryPanel } from './components/MemoryPanel'
 import { displayTitle } from './lib/title'
 import { Resizer } from './components/Resizer'
 import { RunBar } from './components/RunBar'
@@ -64,6 +65,7 @@ export default function App() {
   const { settings, set, provider } = useSettings()
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [memoryOpen, setMemoryOpen] = useState(false)
 
   const [health, setHealth] = useState<Health | null>(null)
   const [models, setModels] = useState<LocalModel[]>([])
@@ -1295,12 +1297,12 @@ const [workspace, setWorkspace] = useState<string | null>(null)
             className="flex h-[24px] shrink-0 items-center justify-between gap-[8px] px-[16px]"
             style={{ borderBottom: '1px solid var(--line-1)' }}
           >
-            <span className="mono min-w-0 truncate text-[10.5px]" style={{ color: 'var(--text-4)' }}>
+            <span className="mono min-w-0 truncate text-[11.5px]" style={{ color: 'var(--text-4)' }}>
               {secTitle}
             </span>
             <button
               type="button"
-              className="ctl rounded-[4px] px-[6px] py-[1px] text-[10px]"
+              className="ctl rounded-[4px] px-[6px] py-[1px] text-[11px]"
               style={{ border: '1px solid var(--line-2)', color: 'var(--text-3)' }}
               onClick={(e) => {
                 e.stopPropagation()
@@ -1444,7 +1446,7 @@ const [workspace, setWorkspace] = useState<string | null>(null)
                 </h1>
               )}
               <span
-                className="mono shrink-0 text-[10.5px]"
+                className="mono shrink-0 text-[11.5px]"
                 style={{ color: 'var(--text-4)' }}
               >
                 {loadingThread ? 'loading…' : `${stream.blocks.length} blocks`}
@@ -1463,14 +1465,14 @@ const [workspace, setWorkspace] = useState<string | null>(null)
                 title={`${workspace ?? '…'} — click to change`}
               >
                 <IconFolder size={11} />
-                <span className="mono max-w-[180px] truncate text-[10.5px]">
+                <span className="mono max-w-[180px] truncate text-[11.5px]">
                   {workspaceName}
                 </span>
               </button>
             </div>
         <div className="flex shrink-0 items-center gap-[12px]">
           <span
-            className="mono shrink-0 text-[10.5px]"
+            className="mono shrink-0 text-[11.5px]"
             style={{ color: 'var(--text-4)' }}
             title="The mode the agent is running in"
           >
@@ -1479,7 +1481,7 @@ const [workspace, setWorkspace] = useState<string | null>(null)
           {/* what the last run actually cost at the provider, when it tells us */}
           {stream.usage && (
             <span
-              className="mono hidden shrink-0 text-[10.5px] lg:inline"
+              className="mono hidden shrink-0 text-[11.5px] lg:inline"
               style={{ color: 'var(--text-4)' }}
               title={`The provider's accounting for the last run: ${stream.usage.promptTokens.toLocaleString()} in, ${stream.usage.completionTokens.toLocaleString()} out`}
             >
@@ -1488,7 +1490,7 @@ const [workspace, setWorkspace] = useState<string | null>(null)
             </span>
           )}
               <motion.span
-                className="mono hidden shrink-0 text-[10.5px] md:inline"
+                className="mono hidden shrink-0 text-[11.5px] md:inline"
                 style={{ color: health ? 'var(--text-4)' : 'var(--text-2)' }}
                 animate={{ opacity: drawer.open ? 0 : 1 }}
                 transition={{ duration: dur.enter, ease: easeOut }}
@@ -1695,6 +1697,8 @@ const [workspace, setWorkspace] = useState<string | null>(null)
             models={models}
             remoteModels={remoteModels}
           />
+
+          {memoryOpen && <MemoryPanel onClose={() => setMemoryOpen(false)} />}
         </main>
 
         <Sidebar
@@ -1708,6 +1712,7 @@ const [workspace, setWorkspace] = useState<string | null>(null)
           onNewProject={() => void newProject()}
           onSearch={() => setPaletteOpen(true)}
           onOpenSettings={() => setSettingsOpen(true)}
+          onOpenMemory={() => setMemoryOpen(true)}
           soundOn={settings.soundEnabled}
           onToggleSound={toggleSound}
           onSelect={(s) => {

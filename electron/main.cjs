@@ -325,7 +325,7 @@ async function createWindow() {
              (base-uri), no being framed while an approval card is on screen
              (frame-ancestors), and no form that posts anywhere (form-action).
              connect-src is the one door out, and it is the local agent only. */
-          "default-src 'self' file:; script-src 'self' file:; style-src 'self' file: 'unsafe-inline'; img-src 'self' file: data:; connect-src 'self' http://127.0.0.1:5274; font-src 'self' file: data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+          "default-src 'self' file:; script-src 'self' file: 'sha256-MS6wUCX2k85pH5jS6eA6w9NGKgnKAvMN/cpM8S1OK88='; style-src 'self' file: 'unsafe-inline'; img-src 'self' file: data:; connect-src 'self' http://127.0.0.1:5274; font-src 'self' file: data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
         ],
       },
     })

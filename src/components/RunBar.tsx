@@ -15,7 +15,7 @@ import { dur, easeOut, spring } from '../motion/tokens'
 
 const STEP_MARK: Record<string, string> = {
   pending: '·',
-  in_progress: '›',
+  in_progress: '·',
   done: '✓',
   blocked: '×',
 }
@@ -86,7 +86,7 @@ export function RunBar({
       style={{ maxWidth: 'var(--thread-measure)' }}
     >
       <div
-        className="mono flex items-center gap-[10px] rounded-[7px] px-[10px] py-[5px] text-[10.5px]"
+        className="mono flex items-center gap-[10px] rounded-[7px] px-[10px] py-[5px] text-[11.5px]"
         style={{
           border: '1px solid var(--line-2)',
           background: 'var(--surface)',
@@ -116,7 +116,6 @@ export function RunBar({
               transition={{ duration: dur.hover, ease: easeOut }}
               style={{ display: 'grid', placeItems: 'center' }}
             >
-              ›
             </motion.span>
           </button>
         )}
@@ -146,7 +145,7 @@ export function RunBar({
             onClick={onRewind}
             title="Put every file the last run changed back the way it was"
           >
-            ⤺ rewind
+            Rewind
           </button>
         )}
 
@@ -155,7 +154,7 @@ export function RunBar({
             run is the right place to say so, not a settings page. */}
         {running && trust === 'auto' && (
           <span
-            className="mono shrink-0 rounded-[4px] px-[5px] py-[1px] text-[10px]"
+            className="mono shrink-0 rounded-[4px] px-[5px] py-[1px] text-[11px]"
             style={{
               border: '1px solid var(--line-3)',
               background: 'var(--surface-raised)',
