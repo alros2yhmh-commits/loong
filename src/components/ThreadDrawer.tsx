@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
 import type { Session } from '../lib/contract'
+import { displayTitle } from '../lib/title'
 import { dur, easeOut, enterRow, spring } from '../motion/tokens'
 import { IconPencil, IconPin } from './Icons'
 
@@ -211,7 +212,7 @@ export function Row({
     <motion.div
       role="button"
       tabIndex={0}
-      aria-label={session.title}
+      aria-label={displayTitle(session.title)}
       className="ctl relative block w-full cursor-pointer rounded-[7px] px-[9px] py-[7px] text-left outline-none"
       initial={enterRow.initial}
       animate={enterRow.animate}
@@ -292,7 +293,7 @@ export function Row({
                 className="truncate text-[12.5px]"
                 style={{ color: active ? 'var(--text-1)' : 'var(--text-2)' }}
               >
-                {session.title}
+                {displayTitle(session.title)}
               </span>
             </span>
             {hover ? (

@@ -236,7 +236,7 @@ export function Sidebar({
                 </svg>
               </motion.span>
               <span
-                className="mono text-[9.5px] tracking-[0.08em] uppercase"
+                className="mono text-[10px] tracking-[0.08em] uppercase"
                 style={{ color: 'var(--text-4)' }}
               >
                 {project ?? 'no project'} · {rows.length}

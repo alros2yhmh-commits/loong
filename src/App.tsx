@@ -8,6 +8,7 @@ import { Sidebar } from './components/Sidebar'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { downloadText, threadToMarkdown, transcriptText } from './lib/export-thread'
 import { FilesPanel } from './components/FilesPanel'
+import { displayTitle } from './lib/title'
 import { Resizer } from './components/Resizer'
 import { RunBar } from './components/RunBar'
 import { RunStatus } from './components/RunStatus'
@@ -533,8 +534,6 @@ const [workspace, setWorkspace] = useState<string | null>(null)
   const bootedRef = useRef(false)
 
   useEffect(() => {
-    if (bootedRef.current) return
-    bootedRef.current = true
     let alive = true
     const probe = async () => {
       try {
@@ -557,14 +556,22 @@ const [workspace, setWorkspace] = useState<string | null>(null)
     }
     probe()
     loadModels()
-    void (async () => {
-      const rows = await refreshSessions()
-      if (!alive || rows === null) return
-      /* reopen the thread the reader was last in, so the app never starts on a
-         blank column when there is work to come back to */
-      if (rows.length > 0) await openThread(rows[0].id)
-      else await createThread()
-    })()
+    /* ONLY the thread-opening runs once. The health probe and its interval must
+       run on every mount: the guard used to cover them too, so under StrictMode
+       the first mount was torn down (alive = false) and the second returned
+       early — the probe never set health, and the header said "agent offline"
+       while the agent was answering every other call. */
+    if (!bootedRef.current) {
+      bootedRef.current = true
+      void (async () => {
+        const rows = await refreshSessions()
+        if (!alive || rows === null) return
+        /* reopen the thread the reader was last in, so the app never starts on a
+           blank column when there is work to come back to */
+        if (rows.length > 0) await openThread(rows[0].id)
+        else await createThread()
+      })()
+    }
     const t = window.setInterval(probe, 20_000)
     return () => {
       alive = false
@@ -950,7 +957,9 @@ const [workspace, setWorkspace] = useState<string | null>(null)
 
   const activeTitle = useMemo(() => {
     const found = sessions.find((s) => s.id === focusedId)
-    return found?.title ?? 'New thread'
+    /* the header shows the name a reader can read; editing it starts from the
+       same clean text, so a rename cannot re-introduce the markdown */
+    return displayTitle(found?.title ?? 'New thread')
   }, [sessions, focusedId])
 
   /* renaming from the header, the way every chat app does it */

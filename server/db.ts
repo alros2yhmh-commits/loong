@@ -185,16 +185,27 @@ export function getMessages(sessionId: string, limit = 500): MessageRow[] {
 }
 
 /** first user message becomes the thread title, the way every chat app does it */
+/** a title is a sentence, not the markdown it arrived in */
+export function plainTitle(text: string): string {
+  return text
+    .replace(/^\s*#{1,6}\s*/gm, '')          // a heading at the start of a line
+    .replace(/\s#{2,6}\s+/g, ' ')            // a heading glued mid-sentence
+    .replace(/\*\*|__|\*|_|`{1,3}/g, '')  // emphasis + code marks
+    .replace(/^\s*[-*+]\s+/gm, '')          // bullets
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1') // links keep their words
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 export function autoTitle(sessionId: string, firstUserText: string): void {
   const row = getSession(sessionId)
   if (!row || row.title !== 'New thread') return
   /* the title is the request, not the pleasantry: a thread called "hi" is a
      thread nobody can find again */
-  const clean = firstUserText
-    .replace(/\s+/g, ' ')
+  const clean = plainTitle(firstUserText)
     .replace(/^(hi|hello|hey|سلام|عسلامة|ازيك|صباح الخير|مساء الخير|اهلا|أهلا)[,!\s.!؟?]*/i, '')
     .trim()
-  renameSession(sessionId, (clean || firstUserText).slice(0, 60))
+  renameSession(sessionId, (clean || plainTitle(firstUserText)).slice(0, 60))
 }
 
 export function closeDb(): void {

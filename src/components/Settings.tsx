@@ -766,7 +766,7 @@ export function Settings({
                       rows.length === 0 ? null : (
                         <div className="flex flex-col gap-[6px]">
                           <p
-                            className="mono m-0 text-[9.5px] tracking-[0.1em] uppercase"
+                            className="mono m-0 text-[10px] tracking-[0.1em] uppercase"
                             style={{ color: 'var(--text-4)' }}
                           >
                             {label} · {rows.length}
@@ -781,7 +781,7 @@ export function Settings({
                                 <p className="m-0 text-[12.5px] leading-[1.5]" style={{ color: 'var(--text-1)' }}>
                                   {m.text}
                                 </p>
-                                <p className="mono m-0 mt-[3px] text-[9.5px]" style={{ color: 'var(--text-4)' }}>
+                                <p className="mono m-0 mt-[3px] text-[10px]" style={{ color: 'var(--text-4)' }}>
                                   {m.workspace === null ? 'everywhere' : `project · ${projectName(m.workspace)}`} · {ago(m.at)}
                                 </p>
                               </div>

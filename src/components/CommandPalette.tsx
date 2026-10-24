@@ -65,6 +65,18 @@ export function CommandPalette({
       run: c.run,
     }))
 
+    /* the palette's first job is ACTING. A model list at the top of it buries
+       "new thread" under six vendor names. Groups are ordered by what they are
+       for: the work, then the view, then the model. */
+    const groupRank = (g: string): number => {
+      const key = g.toLowerCase()
+      if (key.includes('thread')) return 0
+      if (key.includes('navigate') || key.includes('layout')) return 1
+      if (key.includes('router') || key.includes('model')) return 9
+      return 5
+    }
+    cmdRows.sort((a, b) => groupRank(a.group) - groupRank(b.group))
+
     const hits = needle
       ? threads.filter((s) => s.title.toLowerCase().includes(needle))
       : threads

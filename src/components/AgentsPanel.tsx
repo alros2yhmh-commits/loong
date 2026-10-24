@@ -157,7 +157,7 @@ function Row({
         </span>
         {a.waiting && (
           <span
-            className="mono shrink-0 rounded-[4px] px-[5px] py-[1px] text-[9.5px]"
+            className="mono shrink-0 rounded-[4px] px-[5px] py-[1px] text-[10px]"
             style={{ border: '1px solid var(--line-4)', color: 'var(--text-2)' }}
           >
             needs you

@@ -260,7 +260,7 @@ export function RunSummary({
               {files.size > 0 && (
                 <div className="mt-[8px] border-t pt-[7px]" style={{ borderColor: 'var(--line-1)' }}>
                   <p
-                    className="mono m-0 mb-[3px] text-[9.5px] tracking-[0.08em] uppercase"
+                    className="mono m-0 mb-[3px] text-[10px] tracking-[0.08em] uppercase"
                     style={{ color: 'var(--text-4)' }}
                   >
                     changed

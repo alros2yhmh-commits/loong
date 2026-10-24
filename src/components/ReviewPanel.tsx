@@ -138,7 +138,7 @@ export function ReviewPanel() {
                       />
                     </div>
                     <span
-                      className="mono w-[54px] shrink-0 text-right text-[9.5px]"
+                      className="mono w-[54px] shrink-0 text-right text-[10px]"
                       style={{ color: 'var(--text-4)' }}
                     >
                       +{f.add} −{f.del}

@@ -48,7 +48,7 @@ export function SkillsPanel() {
             <span className="mono text-[11.5px]" style={{ color: 'var(--text-1)' }}>
               {s.name}
             </span>
-            <span className="mono text-[9.5px]" style={{ color: 'var(--text-4)' }}>
+            <span className="mono text-[10px]" style={{ color: 'var(--text-4)' }}>
               {s.source}
             </span>
             <span className="ml-auto mono text-[10px]" style={{ color: 'var(--text-4)' }}>
@@ -59,7 +59,7 @@ export function SkillsPanel() {
             {s.description}
           </p>
           {s.triggers.length > 0 && (
-            <p className="mono m-0 mt-[3px] text-[9.5px]" style={{ color: 'var(--text-4)' }}>
+            <p className="mono m-0 mt-[3px] text-[10px]" style={{ color: 'var(--text-4)' }}>
               triggers: {s.triggers.join(' · ')}
             </p>
           )}

@@ -56,11 +56,13 @@ export function PlanBlock({ plan }: PlanBlockProps) {
           aria-expanded={open}
           title="Show or hide the plan"
         >
-          <span className="flex items-baseline gap-[8px]">
+          {/* min-w-0 on the text side: a long "3 blocked" label used to push the
+              chevron 5px past the row and clip it */}
+          <span className="flex min-w-0 items-baseline gap-[8px]">
             <span className="text-[10px] tracking-[0.1em] uppercase" style={{ color: 'var(--text-4)' }}>
               Plan
             </span>
-            <span className="mono text-[10.5px]" style={{ color: 'var(--text-4)' }}>
+            <span className="mono truncate text-[10.5px]" style={{ color: 'var(--text-4)' }}>
               {done}/{total} done{blocked > 0 ? ` · ${blocked} blocked` : ''}
             </span>
           </span>

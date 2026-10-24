@@ -37,7 +37,7 @@ export function TimersPanel() {
             <span className="min-w-0 flex-1 truncate text-[11.5px]" style={{ color: 'var(--text-1)' }}>
               {t.title}
             </span>
-            <span className="mono text-[9.5px]" style={{ color: 'var(--text-4)' }}>
+            <span className="mono text-[10px]" style={{ color: 'var(--text-4)' }}>
               {t.firedAt ? 'fired' : mins > 0 ? `in ${mins}m` : 'now'}
             </span>
             <button

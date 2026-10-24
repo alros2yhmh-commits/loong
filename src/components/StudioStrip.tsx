@@ -54,7 +54,7 @@ function Presence({ phase, running }: { phase: AgentPhase; running: boolean }) {
               : { duration: dur.hover }
         }
       />
-      <span className="mono text-[9.5px] tracking-[0.08em] uppercase" style={{ color: 'var(--text-4)' }}>
+      <span className="mono text-[10px] tracking-[0.08em] uppercase" style={{ color: 'var(--text-4)' }}>
         {state}
       </span>
     </span>
@@ -126,7 +126,7 @@ export function StudioStrip({
       <button
         type="button"
         onClick={onZen}
-        className="ctl mono shrink-0 rounded-[5px] px-[6px] py-[2px] text-[9.5px] tracking-[0.06em] uppercase"
+        className="ctl mono shrink-0 rounded-[5px] px-[6px] py-[2px] text-[10px] tracking-[0.06em] uppercase"
         style={{
           border: `1px solid ${zen ? 'var(--line-5)' : 'var(--line-2)'}`,
           color: zen ? 'var(--text-1)' : 'var(--text-4)',

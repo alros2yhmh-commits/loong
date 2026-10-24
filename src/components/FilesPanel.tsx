@@ -71,7 +71,7 @@ export function FilesPanel() {
 
   return (
     <div className="flex h-full flex-col">
-      <p className="mono truncate px-[10px] pt-[6px] pb-[4px] text-[9.5px]" style={{ color: 'var(--text-4)' }} title={root}>
+      <p className="mono truncate px-[10px] pt-[6px] pb-[4px] text-[10px]" style={{ color: 'var(--text-4)' }} title={root}>
         {root}
       </p>
       <div className="min-h-0 flex-1 overflow-y-auto px-[6px] pb-[8px]">

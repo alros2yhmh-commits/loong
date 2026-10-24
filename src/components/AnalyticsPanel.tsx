@@ -69,7 +69,7 @@ export function AnalyticsPanel() {
       <div className="grid grid-cols-3 gap-[6px]">
         {tiles.map(([k, v]) => (
           <div key={k} className="rounded-[6px] px-[9px] py-[7px]" style={{ border: '1px solid var(--line-2)' }}>
-            <p className="mono m-0 text-[9.5px] tracking-[0.06em] uppercase" style={{ color: 'var(--text-4)' }}>
+            <p className="mono m-0 text-[10px] tracking-[0.06em] uppercase" style={{ color: 'var(--text-4)' }}>
               {k}
             </p>
             <p className="m-0 mt-[1px] text-[14px]" style={{ color: 'var(--text-1)' }}>

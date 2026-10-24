@@ -86,6 +86,10 @@ function Grip({
 type Group =
   | { kind: 'block'; block: Block; index: number }
   | { kind: 'tools'; items: { block: Block; index: number }[] }
+  /* consecutive thoughts fold into ONE row. Eight "Thinking…" lines in a
+     column is not transparency, it is a wall: the reader cannot see the answer
+     for the reasoning. */
+  | { kind: 'thoughts'; items: { block: Block; index: number }[] }
 
 /** a key that survives a slice shift: ids, not indices — an index key makes
  *  every block remount (and replay its entrance) when the window moves. */
@@ -103,13 +107,28 @@ function groupBlocks(blocks: Block[]): Group[] {
       run = []
     }
   }
+  let thoughts: { block: Block; index: number }[] = []
+  const flushThoughts = () => {
+    if (thoughts.length === 0) return
+    /* one thought is a block; two or more are a run */
+    if (thoughts.length === 1) out.push({ kind: 'block', block: thoughts[0].block, index: thoughts[0].index })
+    else out.push({ kind: 'thoughts', items: thoughts })
+    thoughts = []
+  }
   blocks.forEach((block, index) => {
+    if (block.k === 'thinking') {
+      flush()
+      thoughts.push({ block, index })
+      return
+    }
+    flushThoughts()
     if (block.k === 'tool') run.push({ block, index })
     else {
       flush()
       out.push({ kind: 'block', block, index })
     }
   })
+  flushThoughts()
   flush()
   return out
 }
@@ -307,6 +326,40 @@ export function Thread({
                   onRewind={onRewind}
                 />
               </div>
+            )
+          }
+
+          /* a run of thoughts: one row, one count, expandable */
+          if (group.kind === 'thoughts') {
+            const chars = group.items.reduce(
+              (n, it) => n + (it.block.k === 'thinking' ? it.block.text.length : 0),
+              0,
+            )
+            return (
+              <details key={key} className="group/thoughts" style={{ opacity: zen ? 0.3 : 1 }}>
+                <summary
+                  className="mono flex cursor-pointer list-none items-center gap-[7px] text-[10px] tracking-[0.06em] uppercase select-none"
+                  style={{ color: 'var(--text-4)' }}
+                >
+                  <span className="inline-block transition-transform group-open/thoughts:rotate-90">›</span>
+                  <span>
+                    {group.items.length} thoughts · {(chars / 1000).toFixed(1)}k chars
+                  </span>
+                </summary>
+                <div className="mt-[4px] flex flex-col gap-[3px] pl-[9px]" style={{ borderLeft: '1px solid var(--line-1)' }}>
+                  {group.items.map((it) => (
+                    <div key={it.index} id={`blk-${start + it.index}`}>
+                      <BlockView
+                        block={it.block}
+                        onDecide={onDecide}
+                        onAnswer={onAnswer}
+                        rewindTargets={rewindTargets}
+                        onRewind={onRewind}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </details>
             )
           }
 

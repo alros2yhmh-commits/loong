@@ -124,10 +124,10 @@ export function RunBar({
         {/* the context budget: honest, live, and never a surprise at 100% */}
         <span
           className="hidden shrink-0 sm:inline"
-          title={`~${estTokens.toLocaleString()} tokens · ${historyChars.toLocaleString()} of ${budgetChars.toLocaleString()} characters of history — the oldest turns are summarised past this`}
+          title={`≈${estTokens.toLocaleString()} tokens · ${historyChars.toLocaleString()} of ${budgetChars.toLocaleString()} characters of history — the oldest turns are summarised past this`}
           style={ctxPercent >= 80 ? { color: 'var(--guilloche-hot)' } : undefined}
         >
-          ctx {ctxPercent}% · ~{estTokens.toLocaleString()} tok
+          ctx {ctxPercent}% · ≈{estTokens.toLocaleString()} tok
         </span>
 
         {/* what the run cost, when the price is known — "free" beats a dash */}
@@ -155,7 +155,7 @@ export function RunBar({
             run is the right place to say so, not a settings page. */}
         {running && trust === 'auto' && (
           <span
-            className="mono shrink-0 rounded-[4px] px-[5px] py-[1px] text-[9.5px]"
+            className="mono shrink-0 rounded-[4px] px-[5px] py-[1px] text-[10px]"
             style={{
               border: '1px solid var(--line-3)',
               background: 'var(--surface-raised)',

@@ -76,7 +76,7 @@ export function IntegrationsPanel() {
                 {preset.name}
               </span>
               {on && (
-                <span className="mono text-[9.5px]" style={{ color: 'var(--text-4)' }}>
+                <span className="mono text-[10px]" style={{ color: 'var(--text-4)' }}>
                   connected
                 </span>
               )}
