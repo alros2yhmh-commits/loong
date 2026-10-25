@@ -58,7 +58,9 @@ export interface SessionRow {
 }
 
 export interface ModelInfo {
+  /** hosted providers answer with `id`; a local ollama answers with `name` */
   id: string
+  name?: string
   label?: string
   vision?: boolean | null
   context?: number | null
@@ -223,6 +225,15 @@ export const api = {
   models: () => json<{ models: ModelInfo[] }>('/api/models'),
   catalog: () => json<{ models: ModelInfo[] }>('/api/catalog/models'),
   openrouterModels: () => json<{ models: ModelInfo[] }>('/api/openrouter/models'),
+
+  /* keys — the interface may set one and ask whether one is set, never read one */
+  keys: () => json<{ keys: Record<string, { set: boolean; hint: string; baseUrl: string }> }>('/api/keys'),
+  putKeys: (body: { keys?: Record<string, string>; baseUrls?: Record<string, string> }) =>
+    json<{ keys: Record<string, { set: boolean; hint: string; baseUrl: string }> }>('/api/keys', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
 
   /* tools */
   tools: () => json<{ tools: ToolInfo[] }>('/api/tools'),

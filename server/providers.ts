@@ -4,6 +4,7 @@ import { createOpenAI } from '@ai-sdk/openai'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import type { LanguageModel } from 'ai'
 import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { baseUrlFor, keyFor } from './keys.ts'
 
 /* ---------------------------------------------------------------------------
    Providers.
@@ -125,8 +126,10 @@ export function loadRuntimeKeys(): void {
   } catch {}
 }
 
-/** the stored key for a provider, if the main process handed one over */
+/** the stored key for a provider — the live store first, then the handshake */
 export function storedKey(provider: string): string | undefined {
+  const live = keyFor(provider)
+  if (live) return live
   const key = runtimeKeys[provider]
   return key && key.trim() ? key.trim() : undefined
 }
@@ -236,10 +239,12 @@ export function resolveModel(cfg: ProviderConfig): LanguageModel {
     }
 
     case 'custom': {
-      if (!cfg.baseUrl) throw new ProviderError('A custom provider needs a base URL.')
+      /* the endpoint may arrive with the run or be stored from Settings */
+      const baseUrl = cfg.baseUrl?.trim() || baseUrlFor('custom')
+      if (!baseUrl) throw new ProviderError('A custom provider needs a base URL.')
       return createOpenAICompatible({
         name: 'custom',
-        baseURL: cfg.baseUrl,
+        baseURL: baseUrl,
         apiKey: apiKey ?? 'not-needed',
       }).chatModel(model)
     }

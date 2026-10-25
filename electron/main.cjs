@@ -33,6 +33,9 @@ function startAgent() {
       ...process.env,
       ELECTRON_RUN_AS_NODE: '1',
       LOONG_PORT: String(AGENT_PORT),
+      /* a fresh install must work in the reader's folder, not in the folder the
+         sidecar happens to live in */
+      LOONG_WORKSPACE: app.getPath('home'),
       NO_PROXY: '127.0.0.1,localhost',
     },
     stdio: 'ignore',

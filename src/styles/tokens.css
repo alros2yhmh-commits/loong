@@ -1,16 +1,17 @@
 /* ===========================================================================
    LOONG design tokens.
 
-   Pure monochrome. The canvas is white, the ink is black, and every surface in
-   between is the SAME white separated by a hairline — a column is defined by
-   its edge, not by its shade. The only grey in the product is the selection,
-   which has to be grey precisely so it does not look like content.
+   The mark is a hand-drawn twelve-point star, black on white. Everything here
+   is derived from that one fact: the canvas is white, the ink is black, and
+   every surface in between is the SAME white separated by a hairline. There is
+   no accent colour, because the mark has none.
 
-   The ink ladder is measured, not eyeballed: every rung is annotated with its
-   WCAG contrast ratio on white. No rung may go below 4.5:1. A previous build
-   put its faintest tier at 3.45:1 and used it for the run bar, the message
-   eyebrows and every composer chip — visible only to a reader who already knew
-   what it said. scripts/contrast.mjs enforces this; it must stay in the repo.
+   The STRUCTURE is the new Claude Desktop's — a tab rail, a centred composer,
+   a title bar, a floor bar, a settings rail with switches. The COLOURS are
+   ours. That is the whole brief: their architecture, our identity.
+
+   The ink ladder is measured, not eyeballed. Each rung carries its WCAG
+   contrast ratio on white, and no rung may fall below 4.5:1.
    =========================================================================== */
 
 :root {
@@ -21,14 +22,14 @@
   --surface-sunken: #ffffff;
   --surface-selected: #f2f2f2;
   --surface-hover: #f7f7f7;
-  /* the one grey that is allowed to be grey */
-  --selection: #d9d9d9;
+  --scrim: rgba(0, 0, 0, 0.32);
 
   /* ---- ink: 21.0 · 12.6 · 8.6 · 5.9 ------------------------------------- */
   --text-1: #000000;
   --text-2: #2e2e2e;
   --text-3: #4a4a4a;
   --text-4: #5f5f5f;
+  --text-invert: #ffffff;
 
   /* ---- hairlines: black at five alphas ---------------------------------- */
   --line-1: rgba(0, 0, 0, 0.11);
@@ -38,6 +39,8 @@
   --line-5: rgba(0, 0, 0, 0.72);
 
   /* ---- controls --------------------------------------------------------- */
+  /* the primary control is the ink itself: a black field, white text. It is
+     the only filled control in the product, so it always means "do it". */
   --btn-primary: #000000;
   --btn-primary-hover: #2d2d2d;
   --btn-primary-active: #1d1d1d;
@@ -45,23 +48,29 @@
   --btn-disabled: #d0d0d0;
   --btn-disabled-text: #999999;
 
+  /* the switch: a black pill with a white knob, the way a physical switch
+     reads rather than a coloured toggle */
+  --switch-on: #000000;
+  --switch-off: #d0d0d0;
+  --switch-knob: #ffffff;
+
   /* ---- the only two shadows in the system ------------------------------- */
   --shadow-overlay: 0 4px 12px rgba(0, 0, 0, 0.08);
   --shadow-modal: 0 8px 32px rgba(0, 0, 0, 0.12);
 
   /* ---- geometry --------------------------------------------------------- */
-  /* the four regions of a desktop agent: a 40px title bar, a 280px sidebar
-     that stretches 240-400, a flexible main, and a 36px status bar */
-  --titlebar-h: 40px;
+  --titlebar-h: 44px;
   --statusbar-h: 36px;
-  --rail-w: 52px;
-  /* 720px at 14px is the conversation's measure */
+  --rail-w: 56px;
+  --sidebar-w: 272px;
+  /* the conversation's measure — 720px at 14px is the width large chat
+     interfaces settle on */
   --thread-measure: 720px;
   --radius-badge: 4px;
   --radius-btn: 8px;
   --radius-card: 12px;
   --radius-input: 12px;
-  --radius-chat: 16px;
+  --radius-chat: 22px;
   --radius-modal: 16px;
 
   /* ---- motion -----------------------------------------------------------
@@ -78,9 +87,13 @@
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --ease-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 
   /* ---- texture ---------------------------------------------------------- */
-  --noise-opacity: 0.022;
+  --noise-opacity: 0.02;
+  /* the dotted field, the reference's backdrop, drawn in black at a whisper */
+  --dot-color: rgba(0, 0, 0, 0.055);
+  --dot-size: 22px;
 }
 
 /* A hairline engraved into the surface: the top edge catches the light and the
@@ -90,13 +103,21 @@
   height: 1px;
   background: linear-gradient(
     to bottom,
-    color-mix(in srgb, var(--text-1) 14%, transparent),
-    color-mix(in srgb, var(--text-1) 5%, transparent)
+    color-mix(in srgb, var(--text-1) 16%, transparent),
+    color-mix(in srgb, var(--text-1) 6%, transparent)
   );
 }
 
-/* A micro-grain over the whole window. It is the difference between a surface
-   and a screen, and at 2.2% it is felt rather than seen. */
+/* The dotted field. It is felt rather than seen: 5.5% black, one dot every
+   22px, so the canvas has a grain without having a colour. */
+.dotted {
+  background-image: radial-gradient(var(--dot-color) 1.1px, transparent 1.1px);
+  background-size: var(--dot-size) var(--dot-size);
+  background-position: -1px -1px;
+}
+
+/* A micro-grain over the whole window — the difference between a surface and a
+   screen. */
 .noise {
   position: absolute;
   inset: 0;
@@ -105,7 +126,7 @@
   opacity: var(--noise-opacity);
   background-image: repeating-conic-gradient(
     from 0deg at 50% 50%,
-    rgba(0, 0, 0, 0.9) 0deg 0.6deg,
+    rgba(0, 0, 0, 0.85) 0deg 0.6deg,
     transparent 0.6deg 1.4deg
   );
   background-size: 3px 3px;

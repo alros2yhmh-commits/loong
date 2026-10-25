@@ -44,6 +44,7 @@ import { ackTimer, addTimer, cancelTimer, fireDue, listTimers, parseDelay, pendi
 import type { ProviderId } from './providers.ts'
 import { pendingApprovals, resolveApproval, pendingQuestions, resolveQuestion } from './approvals.ts'
 import { getSettings, putSettings, getFolderPrefs, putFolderPrefs } from './settings.ts'
+import { KEY_PROVIDERS, keyStatus, setBaseUrl, setKey } from './keys.ts'
 
 /* ---------------------------------------------------------------------------
    The local agent server.
@@ -252,6 +253,28 @@ app.put('/api/settings', async (c) => {
     })
   }
   return c.json({ settings: putSettings((body as { settings?: unknown }).settings) })
+})
+
+/* ---- keys --------------------------------------------------------------
+   The renderer may set a key and may ask whether one is set. It may never
+   read one back: GET returns a masked hint, which is enough to recognise
+   your own key and useless to anyone who steals it. */
+app.get('/api/keys', (c) => c.json({ keys: keyStatus() }))
+
+app.put('/api/keys', async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    keys?: Record<string, unknown>
+    baseUrls?: Record<string, unknown>
+  }
+  const next = body.keys ?? {}
+  for (const p of KEY_PROVIDERS) {
+    if (typeof next[p] === 'string') setKey(p, next[p] as string)
+  }
+  const urls = body.baseUrls ?? {}
+  for (const p of KEY_PROVIDERS) {
+    if (typeof urls[p] === 'string') setBaseUrl(p, urls[p] as string)
+  }
+  return c.json({ keys: keyStatus() })
 })
 
 /* ---- tools (G3) ---------------------------------------------------------

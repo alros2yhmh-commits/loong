@@ -2,6 +2,7 @@ import { serve } from '@hono/node-server'
 import { app } from './index.ts'
 import { HOST, PORT, getWorkspace } from './config.ts'
 import { loadRuntimeKeys } from './providers.ts'
+import { loadKeys } from './keys.ts'
 /* a static import, not a dynamic one: the bundle builder only follows static
    edges, and a headless mode that silently disappears from the shipped bundle
    is worse than a few extra kilobytes */
@@ -21,6 +22,7 @@ if (process.argv[2] === 'run') {
   /* the main process hands over the OS-encrypted keys once per launch; they are
      read into memory and the handshake file is deleted immediately */
   loadRuntimeKeys()
+  loadKeys()
 
   const server = serve({ fetch: app.fetch, port: PORT, hostname: HOST }, (info) => {
     console.log(`[loong] agent server  http://${HOST}:${info.port}`)

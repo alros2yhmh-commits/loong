@@ -32,7 +32,6 @@ export function StatusBar(p: StatusBarProps) {
   const folder = p.workspace
     ? (p.workspace.split(/[\\/]/).filter(Boolean).pop() ?? p.workspace)
     : 'no folder'
-  const short = p.model.length > 34 ? `${p.model.slice(0, 33)}…` : p.model
 
   return (
     <footer
@@ -76,10 +75,6 @@ export function StatusBar(p: StatusBarProps) {
           {(p.usage.promptTokens / 1000).toFixed(1)}k in · {(p.usage.completionTokens / 1000).toFixed(1)}k out
         </span>
       )}
-
-      <span className="mono t-tiny max-w-[280px] truncate" style={{ color: 'var(--text-3)' }} title={p.model}>
-        {short || 'no model'}
-      </span>
 
       <span className="t-tiny" style={{ color: 'var(--text-3)' }} title={p.workspace ?? 'no folder chosen'}>
         {folder}
