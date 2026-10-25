@@ -74,6 +74,7 @@ function createWindow() {
     minWidth: 900,
     minHeight: 600,
     show: false,
+    backgroundColor: '#0e0e10',
     title: 'Loong',
     /* no OS title bar; Windows still draws min / max / close over the content
        through titleBarOverlay, so snap, resize and drag are native */
@@ -92,7 +93,31 @@ function createWindow() {
   })
   /* belt and braces: some Windows builds still paint the bar after autoHide */
   win.setMenuBarVisibility(false)
-  win.once('ready-to-show', () => win.show())
+
+  /* the renderer may never report a first paint here (no GPU process, hidden
+     title bar), so ready-to-show is an optimisation, not the only path */
+  let shown = false
+  const show = () => {
+    if (shown) return
+    shown = true
+    win.show()
+    win.focus()
+  }
+  win.once('ready-to-show', show)
+  win.webContents.on('did-finish-load', show)
+  setTimeout(show, 2500)
+
+  /* a renderer that fails to load must say so in the window, not in a log */
+  win.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    win.webContents
+      .executeJavaScript(
+        `document.body.innerHTML = '<pre style="font:13px monospace;color:#f4f4f2;background:#0e0e10;padding:24px;margin:0">' +
+          'The interface failed to load.\\n\\n' + ${JSON.stringify(desc)} + ' (' + ${JSON.stringify(code)} + ')\\n' +
+          ${JSON.stringify(url)} + '</pre>'`,
+      )
+      .catch(() => {})
+    show()
+  })
   win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
   return win
 }
