@@ -149,20 +149,27 @@ export interface QuestionRequest {
   options?: string[]
 }
 
+/* The agent's plan, as it actually arrives from server/tools.ts. It used to be
+   read as { title, steps[].title, status: 'running' } — none of which exist — so
+   every plan rendered as a row of empty dots. */
 export interface PlanStep {
-  title: string
-  detail?: string
-  status: 'pending' | 'running' | 'done' | 'failed'
+  description: string
+  status: 'pending' | 'in_progress' | 'done' | 'blocked'
 }
 
 export interface Plan {
-  title?: string
+  task: string
   steps: PlanStep[]
+  updatedAt?: number
+  /** the bar this work is measured against */
+  reference?: string
+  /** concrete acceptance criteria, decided before the work */
+  doneWhen?: string[]
 }
 
 export interface Audit {
-  title?: string
-  findings?: { label: string; ok: boolean; detail?: string }[]
+  verdict: 'met' | 'partial' | 'not_met'
+  items: { criterion: string; met: boolean; evidence: string }[]
 }
 
 export interface Usage {

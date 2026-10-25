@@ -1,4 +1,4 @@
-import { motion } from 'motion/react'
+import { AnimatePresence, motion } from 'motion/react'
 
 /* ===========================================================================
    The status bar — the fourth region.
@@ -42,16 +42,26 @@ export function StatusBar(p: StatusBarProps) {
         {p.running ? (
           <motion.span
             className="inline-block h-[6px] w-[6px] rounded-full"
-            style={{ background: 'var(--text-1)' }}
+            style={{ background: 'var(--amber)' }}
             animate={{ opacity: [1, 0.25, 1] }}
             transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
           />
         ) : (
           <span className="inline-block h-[6px] w-[6px] rounded-full" style={{ background: 'var(--line-3)' }} />
         )}
-        <span className="t-tiny" style={{ color: 'var(--text-2)' }}>
-          {word}
-        </span>
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.span
+            key={word}
+            initial={{ opacity: 0, y: 3 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -3 }}
+            transition={{ duration: 0.14 }}
+            className="t-tiny"
+            style={{ color: word === 'idle' ? 'var(--text-3)' : 'var(--amber)' }}
+          >
+            {word}
+          </motion.span>
+        </AnimatePresence>
       </span>
 
       <span className="t-tiny" style={{ color: 'var(--text-3)' }}>{p.mode}</span>

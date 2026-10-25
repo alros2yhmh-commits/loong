@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { api, type ModelInfo, type ProviderInfo, type Settings } from '../lib/api'
+import { api, type ProviderInfo, type Settings } from '../lib/api'
 
 /* ===========================================================================
    Settings.
@@ -14,22 +14,12 @@ import { api, type ModelInfo, type ProviderInfo, type Settings } from '../lib/ap
    ever being able to read it back.
    =========================================================================== */
 
+/* Three panes. Sound was removed because the product makes no sound; Runtime
+   was removed because "connected" is already in the status bar; and the
+   provider/model picker moved to the composer, where you are when you need it. */
 const RAIL: { group: string; items: [string, string][] }[] = [
-  {
-    group: 'General',
-    items: [
-      ['appearance', 'Appearance'],
-      ['sound', 'Sound'],
-    ],
-  },
-  {
-    group: 'Model',
-    items: [
-      ['provider', 'Provider'],
-      ['keys', 'API keys'],
-      ['runtime', 'Runtime'],
-    ],
-  },
+  { group: 'General', items: [['appearance', 'Appearance']] },
+  { group: 'Model', items: [['keys', 'API keys']] },
   { group: 'Desk', items: [['about', 'About']] },
 ]
 
@@ -55,10 +45,9 @@ export function SettingsPanel({
   health: boolean | null
 }) {
   const [pane, setPane] = useState('appearance')
+  /* the status bar owns "connected"; the prop stays for the shell contract */
+  void health
   const [providers, setProviders] = useState<ProviderInfo[]>([])
-  const [models, setModels] = useState<ModelInfo[]>([])
-  const [catalog, setCatalog] = useState<ModelInfo[]>([])
-  const [q, setQ] = useState('')
   const [keys, setKeys] = useState<Record<string, { set: boolean; hint: string; baseUrl: string }>>({})
   const [draft, setDraft] = useState<Record<string, string>>({})
   /* a save either worked or it did not, and the reader is told which */
@@ -67,19 +56,10 @@ export function SettingsPanel({
   useEffect(() => {
     if (!open) return
     void api.providers().then((r) => setProviders(r.providers ?? [])).catch(() => {})
-    void api.models().then((r) => setModels(r.models ?? [])).catch(() => {})
-    void api.catalog().then((r) => setCatalog(r.models ?? [])).catch(() => {})
     void api.keys().then((r) => setKeys(r.keys ?? {})).catch(() => {})
   }, [open, settings.provider])
 
   if (!open) return null
-
-  const shown = (() => {
-    const needle = q.trim().toLowerCase()
-    const pool = models.length ? models : catalog
-    if (!needle) return pool.slice(0, 60)
-    return pool.filter((m) => m.id.toLowerCase().includes(needle)).slice(0, 60)
-  })()
 
   const saveKey = async (id: string) => {
     const value = draft[id] ?? ''
@@ -208,103 +188,6 @@ export function SettingsPanel({
                   </>
                 )}
 
-                {pane === 'sound' && (
-                  <>
-                    <h3 className="display m-0 t-h3">Sound</h3>
-                    <p className="mt-[5px] mb-[18px] t-small leading-[1.65]" style={{ color: 'var(--text-3)' }}>
-                      A very quiet click when the agent finishes. Off by default, because a tool that
-                      makes noise unprompted is a tool you mute.
-                    </p>
-                    <Row label="Enabled">
-                      <Switch
-                        on={settings.soundEnabled}
-                        onChange={(v) => onChange({ soundEnabled: v })}
-                        label="Sound"
-                      />
-                    </Row>
-                    <Row label="Volume">
-                      <div className="flex items-center gap-[12px]">
-                        <input
-                          type="range"
-                          min={0}
-                          max={100}
-                          value={Math.round(settings.volume * 100)}
-                          onChange={(e) => onChange({ volume: Number(e.target.value) / 100 })}
-                          aria-label="Volume"
-                          className="flex-1"
-                        />
-                        <span className="mono t-small" style={{ color: 'var(--text-3)' }}>
-                          {Math.round(settings.volume * 100)}%
-                        </span>
-                      </div>
-                    </Row>
-                  </>
-                )}
-
-                {pane === 'provider' && (
-                  <>
-                    <h3 className="display m-0 t-h3">Provider and model</h3>
-                    <p className="mt-[5px] mb-[18px] t-small leading-[1.65]" style={{ color: 'var(--text-3)' }}>
-                      The model that runs. A catalogue search beats a 322-row dropdown.
-                    </p>
-                    <Row label="Provider">
-                      <div className="flex flex-wrap gap-[6px]">
-                        {providers.map((p) => (
-                          <button
-                            key={p.id}
-                            type="button"
-                            aria-label={`Select ${p.label} as the model provider`}
-                            aria-pressed={settings.provider === p.id}
-                            className="ctl rounded-[7px] px-[11px] py-[6px] t-small"
-                            style={{
-                              border: `1px solid ${settings.provider === p.id ? 'var(--line-4)' : 'var(--line-2)'}`,
-                              color: 'var(--text-1)',
-                            }}
-                            onClick={() => onChange({ provider: p.id })}
-                          >
-                            {p.label}
-                          </button>
-                        ))}
-                      </div>
-                    </Row>
-                    <Row label="Model">
-                      <input
-                        value={q}
-                        onChange={(e) => setQ(e.target.value)}
-                        placeholder="Search the catalogue…"
-                        aria-label="Search the catalogue"
-                        className="w-full rounded-[8px] px-[11px] py-[7px] t-small outline-none"
-                        style={{ border: '1px solid var(--line-2)' }}
-                      />
-                      <div className="mt-[8px] flex max-h-[300px] flex-col overflow-y-auto">
-                        {shown.map((m) => (
-                          <button
-                            key={m.id}
-                            type="button"
-                            className="ctl rounded-[7px] px-[10px] py-[6px] text-left"
-                            style={{ background: settings.model === m.id ? 'var(--surface-selected)' : 'transparent' }}
-                            onClick={() => onChange({ model: m.id })}
-                          >
-                            <span className="mono block truncate t-small" style={{ color: 'var(--text-1)' }}>
-                              {m.id}
-                            </span>
-                            {m.context ? (
-                              <span className="block t-tiny" style={{ color: 'var(--text-4)' }}>
-                                {Math.round(m.context / 1000)}k context{m.vision ? ' · images' : ''}
-                              </span>
-                            ) : null}
-                          </button>
-                        ))}
-                        {shown.length === 0 && (
-                          <p className="m-0 py-[10px] t-small" style={{ color: 'var(--text-3)' }}>
-                            No model matches that.
-                          </p>
-                        )}
-                      </div>
-                    </Row>
-                  </>
-                )}
-
                 {pane === 'keys' && (
                   <>
                     <h3 className="display m-0 t-h3">API keys</h3>
@@ -313,6 +196,28 @@ export function SettingsPanel({
                       one and can tell you whether one is set — it cannot read it. That is the whole
                       point: an interface that can read your key is an interface that can leak it.
                     </p>
+                    <Row label="Provider" hint="Where the model runs. The key below belongs to it.">
+                      <div className="flex flex-wrap gap-[5px]">
+                        {providers.map((pr) => (
+                          <button
+                            key={pr.id}
+                            type="button"
+                            aria-label={`Select ${pr.label} as the provider`}
+                            aria-pressed={settings.provider === pr.id}
+                            className="ctl rounded-[7px] px-[11px] py-[5px] t-small"
+                            style={{
+                              border: `1px solid ${settings.provider === pr.id ? 'var(--line-4)' : 'var(--line-2)'}`,
+                              color: settings.provider === pr.id ? 'var(--text-1)' : 'var(--text-2)',
+                              background: settings.provider === pr.id ? 'var(--selected)' : 'transparent',
+                            }}
+                            onClick={() => onChange({ provider: pr.id })}
+                          >
+                            {pr.label}
+                          </button>
+                        ))}
+                      </div>
+                    </Row>
+
                     {KEY_ROWS.map((k) => {
                       const status = keys[k.id] ?? { set: false, hint: '' }
                       return (
@@ -404,40 +309,6 @@ export function SettingsPanel({
                         </div>
                       )
                     })}
-                  </>
-                )}
-
-                {pane === 'runtime' && (
-                  <>
-                    <h3 className="display m-0 t-h3">Runtime</h3>
-                    <p className="mt-[5px] mb-[18px] t-small leading-[1.65]" style={{ color: 'var(--text-3)' }}>
-                      The agent is a separate local process. It is the only thing that ever sees a
-                      key, and the key never reaches this window.
-                    </p>
-                    <Row label="Status">
-                      <span className="t-small" style={{ color: 'var(--text-2)' }}>
-                        {health === null ? 'checking…' : health ? 'connected' : 'not running'}
-                      </span>
-                    </Row>
-                    <Row label="Default mode" hint="Plan is session-only and is never remembered.">
-                      <div className="flex gap-[6px]">
-                        {(['ask', 'plan', 'agent'] as const).map((m) => (
-                          <button
-                            key={m}
-                            type="button"
-                            aria-pressed={settings.mode === m}
-                            className="ctl rounded-[7px] px-[11px] py-[6px] t-small"
-                            style={{
-                              border: `1px solid ${settings.mode === m ? 'var(--line-4)' : 'var(--line-2)'}`,
-                              color: 'var(--text-1)',
-                            }}
-                            onClick={() => onChange({ mode: m })}
-                          >
-                            {m}
-                          </button>
-                        ))}
-                      </div>
-                    </Row>
                   </>
                 )}
 

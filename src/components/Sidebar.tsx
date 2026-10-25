@@ -173,7 +173,13 @@ export function Sidebar(p: SidebarProps) {
       </div>
 
       {/* the list: conversations in Home, sessions in Code */}
-      <nav className="min-h-0 flex-1 overflow-y-auto px-[8px] pb-[10px]">
+      <motion.nav
+        key={p.surface}
+        initial={{ opacity: 0, x: -4 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+        className="min-h-0 flex-1 overflow-y-auto px-[8px] pb-[10px]"
+      >
         <p className="mono m-0 px-[9px] pt-[12px] pb-[6px] t-tiny tracking-[0.12em] uppercase" style={{ color: 'var(--text-4)' }}>
           {p.surface === 'code' ? 'Sessions' : 'Conversations'}
         </p>
@@ -276,7 +282,7 @@ export function Sidebar(p: SidebarProps) {
             })}
           </AnimatePresence>
         </ul>
-      </nav>
+      </motion.nav>
 
       {/* the footer: settings, and nothing else */}
       <div className="mt-auto px-[8px] py-[8px]" style={{ borderTop: '1px solid var(--line-1)' }}>

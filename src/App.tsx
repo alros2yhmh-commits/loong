@@ -443,8 +443,22 @@ export default function App() {
       <ModelPicker
         open={modelPicker}
         current={settings?.model ?? ''}
+        provider={settings?.provider ?? 'ollama'}
         onClose={() => setModelPicker(false)}
         onPick={(model) => patch({ model })}
+        onProvider={(provider) => {
+          /* a provider change invalidates the model: pick the first one the new
+             provider offers rather than leaving a name it cannot run */
+          patch({ provider })
+          void api
+            .models()
+            .then((r) => {
+              const first = (r.models ?? [])[0] as unknown as { id?: string; name?: string } | undefined
+              const chosen = first?.id ?? first?.name
+              if (chosen) patch({ model: chosen })
+            })
+            .catch(() => {})
+        }}
       />
 
       <CommandPalette

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'motion/react'
-import { api, type ModelInfo } from '../lib/api'
+import { api, type ModelInfo, type ProviderInfo } from '../lib/api'
 
 /* ===========================================================================
    The model picker, in the composer.
@@ -17,15 +17,20 @@ import { api, type ModelInfo } from '../lib/api'
 export function ModelPicker({
   open,
   current,
+  provider,
   onClose,
   onPick,
+  onProvider,
 }: {
   open: boolean
   current: string
+  provider: string
   onClose: () => void
   onPick: (model: string) => void
+  onProvider: (id: string) => void
 }) {
   const [models, setModels] = useState<ModelInfo[]>([])
+  const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [q, setQ] = useState('')
   const [custom, setCustom] = useState('')
   const [busy, setBusy] = useState(true)
@@ -38,13 +43,14 @@ export function ModelPicker({
     setCustom('')
     setBusy(true)
     setError(null)
+    void api.providers().then((r) => setProviders(r.providers ?? [])).catch(() => {})
     void api
       .models()
       .then((r) => setModels(r.models ?? []))
       .catch((e) => setError((e as Error).message))
       .finally(() => setBusy(false))
     requestAnimationFrame(() => input.current?.focus())
-  }, [open])
+  }, [open, provider])
 
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase()
@@ -72,6 +78,26 @@ export function ModelPicker({
         }}
         onMouseDown={(e) => e.stopPropagation()}
       >
+        <div className="flex flex-wrap gap-[3px] p-[7px]" style={{ borderBottom: '1px solid var(--line-1)' }}>
+          {providers.map((pr) => (
+            <button
+              key={pr.id}
+              type="button"
+              aria-label={`Use ${pr.label}`}
+              aria-pressed={provider === pr.id}
+              className="ctl rounded-[6px] px-[8px] py-[3px] t-tiny"
+              style={{
+                border: `1px solid ${provider === pr.id ? 'var(--line-4)' : 'transparent'}`,
+                background: provider === pr.id ? 'var(--selected)' : 'transparent',
+                color: provider === pr.id ? 'var(--text-1)' : 'var(--text-3)',
+              }}
+              onClick={() => onProvider(pr.id)}
+            >
+              {pr.label}
+            </button>
+          ))}
+        </div>
+
         <div className="p-[8px]" style={{ borderBottom: '1px solid var(--line-1)' }}>
           <input
             ref={input}
