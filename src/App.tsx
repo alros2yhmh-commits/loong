@@ -314,12 +314,18 @@ export default function App() {
     <div className="flex h-full w-full flex-col" style={{ background: 'var(--canvas)' }}>
       {/* ---- the title bar 44px ------------------------------------------- */}
       <header
-        className="flex h-[38px] shrink-0 items-center gap-[10px] px-[12px]"
-        style={{ borderBottom: '1px solid var(--line-1)', background: 'var(--canvas)' }}
+        className="flex h-[38px] shrink-0 items-center gap-[10px] pl-[12px] pr-[146px]"
+        style={{
+          borderBottom: '1px solid var(--line-1)',
+          background: 'var(--canvas)',
+          /* the whole strip drags the window; every control inside opts out */
+          WebkitAppRegion: 'drag',
+        } as React.CSSProperties}
       >
         <button
           type="button"
           className="ctl grid h-[24px] w-[24px] place-items-center rounded-[6px]"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
           aria-label={sidebarOpen ? 'Hide the sidebar' : 'Show the sidebar'}
           title={sidebarOpen ? 'Hide the sidebar — Ctrl B' : 'Show the sidebar — Ctrl B'}
           onClick={() => setSidebarOpen((v) => !v)}

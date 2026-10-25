@@ -66,6 +66,10 @@
 
   /* ---- geometry --------------------------------------------------------- */
   --titlebar-h: 38px;
+  /* the width Windows reserves for min / max / close */
+  --window-controls: 138px;
+  /* the width Windows reserves for min / max / close */
+  --window-controls: 138px;
   --statusbar-h: 30px;
   --sidebar-w: 268px;
   --rail-w: 48px;

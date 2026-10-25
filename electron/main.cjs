@@ -5,7 +5,7 @@
    The agent is spawned as a real child with a real cwd, and the interface
    loads over file:// — which is why the API base is absolute in the renderer.
    --------------------------------------------------------------------------- */
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron')
+const { app, BrowserWindow, Menu, dialog, ipcMain, shell } = require('electron')
 const { spawn } = require('node:child_process')
 const path = require('node:path')
 const fs = require('node:fs')
@@ -42,6 +42,31 @@ function startAgent() {
   })
 }
 
+/* A menu with only the roles the accelerators need. It is never shown: the
+   bar is hidden below, but the roles stay registered so Ctrl+C, Ctrl+V,
+   Ctrl+A, Ctrl+Z, Ctrl+W and Ctrl+Q keep working. */
+function installMenu() {
+  const menu = Menu.buildFromTemplate([
+    { role: 'editMenu' },
+    { role: 'windowMenu' },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+      ],
+    },
+  ])
+  Menu.setApplicationMenu(menu)
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1280,
@@ -50,13 +75,23 @@ function createWindow() {
     minHeight: 600,
     show: false,
     title: 'Loong',
-    titleBarStyle: 'hiddenInset',
+    /* no OS title bar; Windows still draws min / max / close over the content
+       through titleBarOverlay, so snap, resize and drag are native */
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#0e0e10',
+      symbolColor: '#a3a39e',
+      height: 38,
+    },
+    autoHideMenuBar: true,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       preload: path.join(__dirname, 'preload.cjs'),
     },
   })
+  /* belt and braces: some Windows builds still paint the bar after autoHide */
+  win.setMenuBarVisibility(false)
   win.once('ready-to-show', () => win.show())
   win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
   return win
@@ -88,6 +123,7 @@ app.whenReady().then(() => {
     }
   })
 
+  installMenu()
   startAgent()
   createWindow()
   app.on('activate', () => {

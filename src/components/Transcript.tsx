@@ -599,9 +599,15 @@ export function Transcript(p: TranscriptProps) {
                 {calls && (
                   <RailRow
                     state="done"
-                    label={<span className="mono">tool call written as text</span>}
-                    meta="the provider cannot call tools"
+                    label={<span className="mono">tool call written as text — no tool ran</span>}
+                    meta="this model cannot emit tool calls"
                   >
+                    <p className="m-0 mb-[6px] t-small leading-[1.55]" style={{ color: 'var(--text-2)' }}>
+                      This endpoint's model writes the call into the message instead of
+                      emitting a real tool call, so the agent had nothing to execute and the
+                      run ended after one step. Switch to a model that supports tool calling —
+                      a local one, or a hosted one with a function-calling API.
+                    </p>
                     <Code text={calls} tone={3} max={3000} />
                   </RailRow>
                 )}

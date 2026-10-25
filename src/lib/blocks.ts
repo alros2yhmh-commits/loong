@@ -293,10 +293,12 @@ export function fold(blocks: Block[], e: AgentEvent): Block[] {
  * used to fill the whole window. Split it out so the transcript can fold it.
  */
 export function splitToolCalls(text: string): { prose: string; calls: string } {
-  const i = text.indexOf('[tool_calls]')
-  if (i < 0) return { prose: text, calls: '' }
+  /* both shapes appear in the wild: "[tool_calls]" and "[[tool_calls]]" */
+  const m = /\[\[?tool_calls\]?\]/i.exec(text)
+  if (!m) return { prose: text, calls: '' }
+  const i = m.index
   const prose = text.slice(0, i).trimEnd()
-  const calls = text.slice(i + '[tool_calls]'.length).trim()
+  const calls = text.slice(i + m[0].length).trim()
   return { prose, calls }
 }
 
