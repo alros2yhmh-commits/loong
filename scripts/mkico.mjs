@@ -9,7 +9,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs'
    PNG bytes. Windows reads PNG-compressed entries from Vista onward.
    --------------------------------------------------------------------------- */
 
-const sizes = [256, 128, 64, 48, 32, 16]
+const sizes = [16, 32, 48, 64, 128, 256]
 const images = []
 for (const s of sizes) {
   const p = `public/icon/icon-${s}.png`
