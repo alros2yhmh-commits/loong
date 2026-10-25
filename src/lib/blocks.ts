@@ -38,6 +38,7 @@ export type Block =
   | { k: 'check'; id: string; label: string; ok: boolean; at: number }
   | { k: 'screenshot'; id: string; path: string; tool: string; at: number }
   | { k: 'notice'; id: string; text: string; at: number }
+  | { k: 'stop'; id: string; reason: string; text: string; model?: string; at: number }
   | { k: 'subagent'; id: string; scope: string; task: string; phase: string; detail?: string; at: number }
   | { k: 'failed'; id: string; cause: string; detail: string; model?: string; at: number }
 
@@ -241,10 +242,22 @@ export function fold(blocks: Block[], e: AgentEvent): Block[] {
       })
       return next
     }
-    case 'loong.notice':
-    case 'loong.retry':
     case 'loong.stop': {
-      const text = String(v.text ?? v.detail ?? '')
+      const reason = String(v.reason ?? '')
+      const model = v.model ? String(v.model) : ''
+      if (!reason) return next
+      const word =
+        reason === 'step-limit'
+          ? 'Stopped at the step budget — the task needed more turns than this run allows. Send "continue", or split it into smaller pieces.'
+          : reason === 'aborted'
+            ? 'Stopped on request.'
+            : 'The run finished.'
+      next.push({ k: 'stop', id: newId(), reason, text: word, model, at })
+      return next
+    }
+    case 'loong.notice':
+    case 'loong.retry': {
+      const text = String(v.text ?? v.detail ?? v.reason ?? '')
       if (!text) return next
       next.push({ k: 'notice', id: newId(), text, at })
       return next
@@ -272,6 +285,19 @@ export function fold(blocks: Block[], e: AgentEvent): Block[] {
     default:
       return next
   }
+}
+
+/**
+ * A provider that cannot emit real tool calls writes them into the message as
+ * text — `[tool_calls] [{...}]`. It is a machine artefact, not prose, and it
+ * used to fill the whole window. Split it out so the transcript can fold it.
+ */
+export function splitToolCalls(text: string): { prose: string; calls: string } {
+  const i = text.indexOf('[tool_calls]')
+  if (i < 0) return { prose: text, calls: '' }
+  const prose = text.slice(0, i).trimEnd()
+  const calls = text.slice(i + '[tool_calls]'.length).trim()
+  return { prose, calls }
 }
 
 /** one line a tool row can show while it runs and after it finishes */

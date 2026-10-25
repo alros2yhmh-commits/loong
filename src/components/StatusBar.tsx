@@ -23,8 +23,8 @@ export interface StatusBarProps {
 const PHASE_WORD: Record<string, string> = {
   thinking: 'thinking',
   streaming: 'writing',
-  tool: 'running a tool',
-  waiting: 'waiting for approval',
+  tool: 'working',
+  waiting: 'waiting for you',
 }
 
 export function StatusBar(p: StatusBarProps) {

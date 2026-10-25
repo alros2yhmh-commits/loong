@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeSanitize from 'rehype-sanitize'
 import { api, type ApprovalRequest, type Plan, type PlanStep, type QuestionRequest, type Audit } from '../lib/api'
-import type { Block } from '../lib/blocks'
+import { splitToolCalls, type Block } from '../lib/blocks'
 import { Dragon, Working } from './Dragon'
 import { t, e, rise, card, collapse, stagger } from '../lib/motion'
 
@@ -562,10 +562,12 @@ export function Transcript(p: TranscriptProps) {
               </motion.div>
             )
 
-          case 'text':
+          case 'text': {
+            const { prose, calls } = splitToolCalls(b.text)
             return (
               <motion.div key={b.id} variants={rise} initial="initial" animate="animate">
                 <div className="md bidi" dir="auto" style={{ color: 'var(--text-1)' }}>
+                  {prose && (
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm]}
                     rehypePlugins={[rehypeSanitize]}
@@ -587,12 +589,25 @@ export function Transcript(p: TranscriptProps) {
                       ),
                     }}
                   >
-                    {b.text}
+                    {prose}
                   </ReactMarkdown>
+                  )}
                   {b.streaming && <span className="caret" aria-hidden />}
                 </div>
+
+                {/* the machine artefact, folded: visible, never shouted */}
+                {calls && (
+                  <RailRow
+                    state="done"
+                    label={<span className="mono">tool call written as text</span>}
+                    meta="the provider cannot call tools"
+                  >
+                    <Code text={calls} tone={3} max={3000} />
+                  </RailRow>
+                )}
               </motion.div>
             )
+          }
 
           case 'thinking':
             if (!showThinking) return null
@@ -660,6 +675,21 @@ export function Transcript(p: TranscriptProps) {
                   className="max-w-full rounded-[10px]"
                   style={{ border: '1px solid var(--line-2)' }}
                 />
+              </motion.div>
+            )
+
+          case 'stop':
+            return (
+              <motion.div key={b.id} variants={rise} initial="initial" animate="animate">
+                <RailRow
+                  state={b.reason === 'step-limit' ? 'failed' : 'done'}
+                  label={<span className="mono">{b.reason === 'step-limit' ? 'step limit reached' : 'stopped'}</span>}
+                  meta={b.model}
+                >
+                  <p className="bidi m-0 t-small leading-[1.6]" style={{ color: 'var(--text-2)' }}>
+                    {b.text}
+                  </p>
+                </RailRow>
               </motion.div>
             )
 

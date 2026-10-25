@@ -55,6 +55,7 @@ export default function App() {
   const [resizing, setResizing] = useState(false)
   const [runningIds, setRunningIds] = useState<string[]>([])
   const [notice, setNotice] = useState<string | null>(null)
+  const [attachments, setAttachments] = useState<File[]>([])
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [modelPicker, setModelPicker] = useState(false)
   const dragFrom = useRef<{ x: number; w: number } | null>(null)
@@ -136,9 +137,38 @@ export default function App() {
   }, [])
 
   /* ---- running ----------------------------------------------------------- */
+  /* A text file is read and inlined. Anything else is refused out loud rather
+     than dropped silently. */
+  const readAttachments = useCallback(async (): Promise<{ body: string; refused: string[] }> => {
+    const refused: string[] = []
+    const parts: string[] = []
+    for (const f of attachments) {
+      const isText =
+        f.type.startsWith('text/') ||
+        /\.(md|txt|json|ts|tsx|js|jsx|css|html|yml|yaml|csv|log|toml|py|go|rs|java|c|h|cpp|sh)$/i.test(f.name)
+      if (!isText) {
+        refused.push(f.name)
+        continue
+      }
+      if (f.size > 200_000) {
+        refused.push(`${f.name} (too large)`)
+        continue
+      }
+      const body = await f.text()
+      parts.push(`--- ${f.name} ---\n${body}`)
+    }
+    return { body: parts.join('\n\n'), refused }
+  }, [attachments])
+
   const send = useCallback(async () => {
-    const text = input.trim()
+    const typed = input.trim()
+    const { body: attached, refused } = await readAttachments()
+    const text = [typed, attached].filter(Boolean).join('\n\n')
     if (!text || !settings) return
+    if (refused.length) {
+      setNotice(`not sent: ${refused.join(', ')} — this endpoint takes text only`)
+    }
+    setAttachments([])
     let id = activeId
     if (!id) {
       const created = await api.createSession(
@@ -170,7 +200,7 @@ export default function App() {
     void api.saveBlocks(threadId, stream.blocks).catch(() => {})
     void api.renameSession(threadId, text.slice(0, 60)).catch(() => {})
     reload()
-  }, [input, settings, activeId, workspace, surface, effectiveMode, stream, reload])
+  }, [input, settings, activeId, workspace, surface, effectiveMode, stream, reload, readAttachments])
 
   /* the transcript is persisted whenever it settles, not only on send */
   useEffect(() => {
@@ -268,6 +298,8 @@ export default function App() {
       onPickFolder={pickFolder}
       model={settings.model}
       onPickModel={() => setModelPicker(true)}
+      attachments={attachments}
+      onAttach={(files) => setAttachments((prev) => [...prev, ...files])}
       blockedReason={blockedReason}
       onOpenModeMenu={() => {
         const el = document.querySelector('[aria-label="Permission mode"]')
