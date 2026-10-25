@@ -52,14 +52,31 @@ const PROBE = () => {
   }
   const parse = (s) => { const m = s.match(/[\d.]+/g); return m ? m.slice(0, 3).map(Number) : [255, 255, 255] }
   const ratio = (a, b) => { const l1 = lum(a), l2 = lum(b); return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05) }
+  const parseA = (s) => {
+    const m = s.match(/[\d.]+/g)
+    if (!m) return [0, 0, 0, 0]
+    return [Number(m[0]), Number(m[1]), Number(m[2]), m.length > 3 ? Number(m[3]) : 1]
+  }
+  const over = (fg, bg) => [
+    fg[0] * fg[3] + bg[0] * (1 - fg[3]),
+    fg[1] * fg[3] + bg[1] * (1 - fg[3]),
+    fg[2] * fg[3] + bg[2] * (1 - fg[3]),
+  ]
+  /* walk to the root, compositing every translucent layer onto what is behind it */
   const bgOf = (el) => {
+    const stack = []
     let n = el
     while (n && n !== document.documentElement) {
       const c = getComputedStyle(n).backgroundColor
-      if (c && !c.includes('rgba(0, 0, 0, 0)') && !/, 0\)$/.test(c)) return c
+      if (c && c !== 'transparent') {
+        const a = parseA(c)
+        if (a[3] > 0) stack.push(a)
+      }
       n = n.parentElement
     }
-    return 'rgb(255,255,255)'
+    let base = [14, 14, 16]
+    for (let i = stack.length - 1; i >= 0; i--) base = over(stack[i], base)
+    return base
   }
   const contrast = []
   const tiny = []
@@ -74,7 +91,9 @@ const PROBE = () => {
       const size = parseFloat(cs.fontSize)
       if (size < 10) tiny.push({ size, text: txt.slice(0, 30) })
       const large = size >= 18 || (size >= 14 && Number(cs.fontWeight) >= 600)
-      const got = ratio(parse(cs.color), parse(bgOf(el)))
+      const fg = parseA(cs.color)
+      const bg = bgOf(el)
+      const got = ratio(fg[3] < 1 ? over(fg, bg) : [fg[0], fg[1], fg[2]], bg)
       if (got < (large ? 3 : 4.5)) contrast.push({ ratio: Math.round(got * 100) / 100, text: txt.slice(0, 30) })
     }
     if (el.tagName === 'BUTTON' || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
@@ -115,6 +134,8 @@ await sleep(500)
 for (const [k, v] of Object.entries(surfaces)) {
   console.log(
     k.padEnd(9),
+    JSON.stringify(v.contrast.slice(0,6)),
+
     'contrast:' + String(v.contrast.length).padEnd(3),
     'unnamed:' + String(v.unnamed.length).padEnd(3),
     'tiny:' + String(v.tiny.length).padEnd(3),

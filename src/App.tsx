@@ -56,7 +56,6 @@ export default function App() {
   const [runningIds, setRunningIds] = useState<string[]>([])
   const [notice, setNotice] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
-  const [headerMenu, setHeaderMenu] = useState(false)
   const [modelPicker, setModelPicker] = useState(false)
   const dragFrom = useRef<{ x: number; w: number } | null>(null)
   const scroller = useRef<HTMLDivElement>(null)
@@ -237,6 +236,14 @@ export default function App() {
         e.preventDefault()
         setPaletteOpen(true)
       }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
+        e.preventDefault()
+        setSidebarOpen((v) => !v)
+      }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault()
+        setDiffOpen(true)
+      }
       if (e.key === 'Escape' && stream.running) stream.stop()
     }
     window.addEventListener('keydown', onKey)
@@ -275,14 +282,14 @@ export default function App() {
     <div className="flex h-full w-full flex-col" style={{ background: 'var(--canvas)' }}>
       {/* ---- the title bar 44px ------------------------------------------- */}
       <header
-        className="flex h-[44px] shrink-0 items-center gap-[10px] px-[14px]"
+        className="flex h-[38px] shrink-0 items-center gap-[10px] px-[12px]"
         style={{ borderBottom: '1px solid var(--line-1)', background: 'var(--canvas)' }}
       >
         <button
           type="button"
-          className="ctl grid h-[26px] w-[26px] place-items-center rounded-[7px]"
+          className="ctl grid h-[24px] w-[24px] place-items-center rounded-[6px]"
           aria-label={sidebarOpen ? 'Hide the sidebar' : 'Show the sidebar'}
-          title={sidebarOpen ? 'Hide the sidebar' : 'Show the sidebar'}
+          title={sidebarOpen ? 'Hide the sidebar — Ctrl B' : 'Show the sidebar — Ctrl B'}
           onClick={() => setSidebarOpen((v) => !v)}
         >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
@@ -291,40 +298,20 @@ export default function App() {
           </svg>
         </button>
 
-        <span className="mono min-w-0 truncate t-small" style={{ color: 'var(--text-2)' }}>
-          {folderName ?? 'no folder'}
-          {activeId ? <span style={{ color: 'var(--text-4)' }}> · {sessions.find((s) => s.id === activeId)?.title ?? ''}</span> : null}
+        <span className="mono min-w-0 truncate t-caption" style={{ color: 'var(--text-2)' }}>
+          {folderName ?? (surface === 'code' ? 'no folder' : 'chat')}
         </span>
 
-        <span className="flex-1" />
-
-        {/* two icon buttons and nothing else. The view mode moved into the ⋯
-            menu, because three permanent chips for a setting you change once
-            is three chips too many. */}
-        <button
-          type="button"
-          className="ctl grid h-[26px] w-[26px] place-items-center rounded-[7px]"
-          aria-label="Changes"
-          title="Changes — the diff of everything this folder has changed"
-          onClick={() => setDiffOpen(true)}
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
-            <rect x="2.6" y="2.6" width="10.8" height="10.8" rx="2" stroke="currentColor" strokeWidth="1.3" />
-            <path d="M8 5.6v4.8M5.6 8h4.8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" opacity="0.35" />
-          </svg>
-        </button>
-        <button
-          type="button"
-          className="ctl grid h-[26px] w-[26px] place-items-center rounded-[7px]"
-          aria-label="More"
-          aria-haspopup="menu"
-          title="View mode and settings"
-          onClick={() => setHeaderMenu((v) => !v)}
-        >
-          <span className="t-small" style={{ color: 'var(--text-3)' }}>
-            ⋯
-          </span>
-        </button>
+        {activeId && (
+          <>
+            <span className="t-tiny" style={{ color: 'var(--text-4)' }}>
+              /
+            </span>
+            <span className="min-w-0 truncate t-caption" style={{ color: 'var(--text-3)' }}>
+              {sessions.find((x) => x.id === activeId)?.title ?? ''}
+            </span>
+          </>
+        )}
       </header>
 
       <div className="flex min-h-0 flex-1">
@@ -452,54 +439,6 @@ export default function App() {
         trust={(settings?.trust ?? 'ask') as Trust}
         onPick={(m, t) => patch({ mode: m, trust: t })}
       />
-
-      <AnimatePresence>
-        {headerMenu && (
-          <>
-            <div className="fixed inset-0 z-[74]" onMouseDown={() => setHeaderMenu(false)} />
-            <motion.div
-              initial={{ opacity: 0, y: -4, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -4, scale: 0.98 }}
-              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-              className="fixed right-[14px] top-[46px] z-[75] w-[196px] rounded-[12px] p-[4px]"
-              style={{ background: 'var(--canvas)', border: '1px solid var(--line-3)', boxShadow: 'var(--shadow-modal)' }}
-            >
-              <p className="mono m-0 px-[9px] py-[4px] t-tiny tracking-[0.12em] uppercase" style={{ color: 'var(--text-4)' }}>
-                Transcript
-              </p>
-              {(['normal', 'thinking', 'verbose'] as const).map((v) => (
-                <button
-                  key={v}
-                  type="button"
-                  className="ctl flex w-full items-center gap-[8px] rounded-[8px] px-[9px] py-[6px] text-left t-small"
-                  style={{ background: settings?.view === v ? 'var(--surface-selected)' : 'transparent' }}
-                  onClick={() => {
-                    patch({ view: v })
-                    setHeaderMenu(false)
-                  }}
-                >
-                  <span className="flex-1" style={{ color: 'var(--text-1)' }}>
-                    {v}
-                  </span>
-                  {settings?.view === v && <span style={{ color: 'var(--text-1)' }}>✓</span>}
-                </button>
-              ))}
-              <div className="mx-[6px] my-[4px] rule-engraved" />
-              <button
-                type="button"
-                className="ctl block w-full rounded-[8px] px-[9px] py-[6px] text-left t-small"
-                onClick={() => {
-                  setSettingsOpen(true)
-                  setHeaderMenu(false)
-                }}
-              >
-                Settings
-              </button>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
 
       <ModelPicker
         open={modelPicker}

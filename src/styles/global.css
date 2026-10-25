@@ -21,57 +21,46 @@ body {
   background: var(--canvas);
   color: var(--text-1);
   font-family: 'Inter', 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, sans-serif;
-  font-size: 14px;
+  font-size: 13.5px;
   line-height: 20px;
-  letter-spacing: -0.005em;
+  letter-spacing: -0.004em;
   overflow: hidden;
   cursor: default;
   -webkit-font-smoothing: antialiased;
-  /* the reference's dotted field, under everything */
-  background-image: radial-gradient(var(--dot-color) 1.1px, transparent 1.1px);
+  background-image: radial-gradient(var(--dot) 1px, transparent 1px);
   background-size: var(--dot-size) var(--dot-size);
-  background-position: -1px -1px;
 }
 
-/* Headings get the display cut: tighter, heavier. Body keeps the text cut. */
-h1,
-h2,
-h3,
-.display {
+h1, h2, h3, .display {
   font-family: 'Inter Display', 'Inter', 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif;
   font-weight: 500;
-  letter-spacing: -0.022em;
+  letter-spacing: -0.02em;
   line-height: 1.25;
   margin: 0;
 }
 
-code,
-pre,
-kbd,
-.mono {
+code, pre, kbd, .mono {
   font-family: 'Berkeley Mono', 'JetBrains Mono', 'Cascadia Mono', Consolas, 'SF Mono', monospace;
   font-variant-ligatures: none;
 }
 
 ::selection {
-  background: #d9d9d9;
+  background: rgba(217, 164, 65, 0.28);
 }
 
-/* ---- the type ladder -----------------------------------------------------
-   Every size in the app is one of these, and each carries its own line-height
-   and weight — a 13px at 400 is not a 12px at 500. */
-.t-h1 { font-size: 26px; line-height: 34px; font-weight: 600; letter-spacing: -0.02em; }
-.t-h2 { font-size: 19px; line-height: 26px; font-weight: 600; letter-spacing: -0.015em; }
-.t-h3 { font-size: 16px; line-height: 22px; font-weight: 600; letter-spacing: -0.01em; }
-.t-body { font-size: 14px; line-height: 20px; font-weight: 400; }
-.t-small { font-size: 13px; line-height: 18px; font-weight: 400; }
-.t-caption { font-size: 12px; line-height: 16px; font-weight: 400; }
-.t-tiny { font-size: 11px; line-height: 14px; font-weight: 500; }
-.t-code { font-size: 13px; line-height: 18px; font-weight: 400; }
+/* ---- the type ladder ----------------------------------------------------- */
+.t-h1 { font-size: 24px; line-height: 32px; font-weight: 600; letter-spacing: -0.02em; }
+.t-h2 { font-size: 18px; line-height: 25px; font-weight: 600; letter-spacing: -0.015em; }
+.t-h3 { font-size: 15px; line-height: 21px; font-weight: 600; letter-spacing: -0.01em; }
+.t-body { font-size: 13.5px; line-height: 21px; font-weight: 400; }
+.t-small { font-size: 12.5px; line-height: 18px; font-weight: 400; }
+.t-caption { font-size: 11.5px; line-height: 16px; font-weight: 400; }
+.t-tiny { font-size: 10.5px; line-height: 14px; font-weight: 500; }
+.t-code { font-size: 12.5px; line-height: 19px; font-weight: 400; }
 
 /* ---- interactive base ----------------------------------------------------
-   Every control gets a hover, a press and a focus ring. A control with no
-   press state feels like a label. */
+   Every control has a hover, a press and a focus ring. A control with no press
+   state feels like a label. */
 .ctl {
   appearance: none;
   background: transparent;
@@ -80,44 +69,37 @@ kbd,
   font: inherit;
   cursor: pointer;
   transition:
-    background-color var(--dur-hover) var(--ease-out),
-    border-color var(--dur-hover) var(--ease-out),
-    color var(--dur-hover) var(--ease-out),
-    opacity var(--dur-hover) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
+    background-color var(--t-fast) var(--e-out),
+    border-color var(--t-fast) var(--e-out),
+    color var(--t-fast) var(--e-out),
+    opacity var(--t-fast) var(--e-out),
+    transform 90ms var(--e-out);
 }
-.ctl:hover:not(:disabled) { background: var(--surface-hover); }
-.ctl:active:not(:disabled) { background: var(--surface-selected); transform: scale(0.985); }
-.ctl:disabled { cursor: default; opacity: 0.5; }
+.ctl:hover:not(:disabled) { background: var(--btn-ghost-hover); }
+.ctl:active:not(:disabled) { transform: scale(0.975); }
+.ctl:disabled { cursor: default; opacity: 0.45; }
 
-/* The ring is for the keyboard. A mouse click that paints a 3px halo around a
-   rounded field reads as a grey box, which is exactly what it looked like. */
 .ctl:focus-visible,
 input:focus-visible,
 [tabindex]:focus-visible {
   outline: none;
-  border-color: var(--line-4);
-  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 0 0 2px var(--canvas), 0 0 0 4px var(--amber-line);
 }
 
-/* A textarea carries its own focus treatment (the border of its pill), so it
-   never gets the ring. */
+/* A textarea carries its own focus treatment — the border of its field. It
+   never gets a ring: a ring around a rounded field reads as a box. */
 textarea:focus,
 textarea:focus-visible {
   outline: none;
   box-shadow: none;
 }
 
-input,
-textarea,
-button {
+input, textarea, button {
   font: inherit;
   color: inherit;
 }
 
-/* ---- the switch ---------------------------------------------------------
-   A black pill with a white knob. The knob moves with a spring, because a
-   switch that slides linearly feels like a progress bar. */
+/* ---- the switch ---------------------------------------------------------- */
 .switch {
   position: relative;
   width: 34px;
@@ -126,10 +108,10 @@ button {
   border: none;
   padding: 0;
   cursor: pointer;
-  transition: background-color var(--dur-hover) var(--ease-out);
+  transition: background-color var(--t-fast) var(--e-out);
 }
-.switch[data-on='true'] { background: var(--switch-on); }
-.switch[data-on='false'] { background: var(--switch-off); }
+.switch[data-on='true'] { background: var(--amber); }
+.switch[data-on='false'] { background: rgba(255, 255, 255, 0.16); }
 .switch > span {
   position: absolute;
   top: 2px;
@@ -137,97 +119,99 @@ button {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--switch-knob);
-  transition: transform var(--dur-panel) var(--ease-spring);
+  background: #0e0e10;
+  transition: transform var(--t-base) var(--e-spring);
 }
 .switch[data-on='true'] > span { transform: translateX(14px); }
 
-/* ---- scrollbars: 6px, visible on hover only ------------------------------ */
+/* ---- scrollbars: 8px, visible on hover only ------------------------------ */
 * {
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
 }
 *:hover {
-  scrollbar-color: var(--line-3) transparent;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
 }
-::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
-*:hover::-webkit-scrollbar-thumb { background: var(--line-3); }
+::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*:hover::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.16); background-clip: content-box; }
 
 /* ---- markdown in the transcript ----------------------------------------- */
 .md > *:first-child { margin-top: 0; }
 .md > *:last-child { margin-bottom: 0; }
 .md p { margin: 0 0 12px; }
-.md h1, .md h2, .md h3, .md h4 { margin: 20px 0 8px; }
-.md ul, .md ol { margin: 0 0 12px; padding-left: 22px; }
+.md h1, .md h2, .md h3, .md h4 { margin: 20px 0 8px; color: var(--text-1); }
+.md ul, .md ol { margin: 0 0 12px; padding-left: 20px; }
 .md li { margin: 3px 0; }
-.md a { color: var(--text-1); text-decoration: underline; text-underline-offset: 2px; }
+.md a { color: var(--amber); text-decoration: none; border-bottom: 1px solid var(--amber-line); }
 .md code {
-  font-size: 0.88em;
+  font-size: 0.9em;
   padding: 1px 5px;
-  border-radius: var(--radius-badge);
-  background: var(--surface-selected);
+  border-radius: var(--radius-xs);
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-1);
 }
 .md pre {
   margin: 0 0 12px;
   padding: 12px 14px;
-  border-radius: var(--radius-card);
+  border-radius: var(--radius-md);
   border: 1px solid var(--line-1);
-  background: var(--surface);
+  background: var(--canvas);
   overflow-x: auto;
 }
 .md pre code { background: none; padding: 0; }
 .md blockquote {
   margin: 0 0 12px;
-  padding: 2px 0 2px 14px;
+  padding: 2px 0 2px 12px;
   border-left: 2px solid var(--line-3);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 .md table { border-collapse: collapse; margin: 0 0 12px; }
 .md th, .md td { border: 1px solid var(--line-1); padding: 5px 9px; text-align: left; }
 .md hr { border: none; border-top: 1px solid var(--line-1); margin: 18px 0; }
 
-/* ---- the caret ---------------------------------------------------------- */
-@keyframes caret-blink {
+/* ---- the caret, the shimmer, the live dot -------------------------------- */
+@keyframes caret {
   0%, 45% { opacity: 1; }
   55%, 100% { opacity: 0; }
 }
 .caret {
   display: inline-block;
   width: 2px;
-  height: 15px;
+  height: 14px;
   margin-left: 1px;
-  vertical-align: -3px;
-  background: var(--text-1);
-  animation: caret-blink 1.05s steps(1) infinite;
+  vertical-align: -2px;
+  background: var(--amber);
+  animation: caret 1.05s steps(1) infinite;
 }
 
-/* ---- the working shimmer ------------------------------------------------ */
-@keyframes shimmer {
+@keyframes breathe {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.32; }
+  50% { opacity: 0.4; }
 }
-.shimmer { animation: shimmer var(--dur-shimmer) ease-in-out infinite; }
+.breathe { animation: breathe 1.6s ease-in-out infinite; }
 
-@keyframes pulse-dot {
+@keyframes live {
   0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.28; transform: scale(0.86); }
+  50% { opacity: 0.35; transform: scale(0.82); }
 }
-.pulse-dot { animation: pulse-dot var(--dur-shimmer) ease-in-out infinite; }
+.live { animation: live 1.5s ease-in-out infinite; }
 
 /* ---- reduced motion ------------------------------------------------------
-   A real mode, not a shorter duration: opacity only, and nothing that depends
-   on movement to be understood. */
+   A real mode, not a shorter duration. */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
-  .noise { display: none; }
+  .grain { display: none; }
   .caret { animation: none; opacity: 1; }
-  .shimmer, .pulse-dot { animation: none; opacity: 1; }
+  .breathe, .live { animation: none; opacity: 1; }
 }

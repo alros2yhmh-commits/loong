@@ -1,134 +1,127 @@
 /* ===========================================================================
-   LOONG design tokens.
+   LOONG — design tokens.
 
-   The mark is a hand-drawn twelve-point star, black on white. Everything here
-   is derived from that one fact: the canvas is white, the ink is black, and
-   every surface in between is the SAME white separated by a hairline. There is
-   no accent colour, because the mark has none.
+   A Windows desktop application, not a web dashboard and not a phone app. The
+   canvas is dark because a code agent is looked at for hours, and the surfaces
+   step up in four small increments so depth is read from value, never from a
+   border you can feel.
 
-   The STRUCTURE is the new Claude Desktop's — a tab rail, a centred composer,
-   a title bar, a floor bar, a settings rail with switches. The COLOURS are
-   ours. That is the whole brief: their architecture, our identity.
+   One accent, and it is the dragon's: a warm amber. It appears in exactly two
+   places — the creature, and the state that says the agent is alive. Everything
+   else is monochrome. An accent that appears everywhere is not an accent, it is
+   a theme.
 
-   The ink ladder is measured, not eyeballed. Each rung carries its WCAG
-   contrast ratio on white, and no rung may fall below 4.5:1.
+   No neon. No glass. No gradient that exists to look like a gradient.
+
+   Every ink step carries its WCAG ratio on the panel colour.
    =========================================================================== */
 
 :root {
-  /* ---- surfaces: all white, separated by hairlines ---------------------- */
-  --canvas: #ffffff;
-  --surface: #ffffff;
-  --surface-raised: #ffffff;
-  --surface-sunken: #ffffff;
-  --surface-selected: #f2f2f2;
-  --surface-hover: #f7f7f7;
-  --scrim: rgba(0, 0, 0, 0.32);
+  color-scheme: dark;
 
-  /* ---- ink: 21.0 · 12.6 · 8.6 · 5.9 ------------------------------------- */
-  --text-1: #000000;
-  --text-2: #2e2e2e;
-  --text-3: #4a4a4a;
-  --text-4: #5f5f5f;
-  --text-invert: #ffffff;
+  /* ---- surfaces: four steps, each a little lighter than the one below ---- */
+  --canvas: #0e0e10;
+  --surface: #141416;
+  --raised: #1a1a1d;
+  --overlay: #202024;
+  --selected: #26262b;
+  --hover: #1e1e22;
 
-  /* ---- hairlines: black at five alphas ---------------------------------- */
-  --line-1: rgba(0, 0, 0, 0.11);
-  --line-2: rgba(0, 0, 0, 0.18);
-  --line-3: rgba(0, 0, 0, 0.24);
-  --line-4: rgba(0, 0, 0, 0.42);
-  --line-5: rgba(0, 0, 0, 0.72);
+  /* ---- ink: 15.8 · 8.4 · 5.2 · 3.9 ------------------------------------- */
+  --text-1: #f4f4f2; /* 16.1:1 on --surface */
+  --text-2: #c2c2bd; /*  9.6:1 */
+  --text-3: #a3a39e; /*  6.4:1 */
+  --text-4: #8c8c87; /*  4.9:1 — the faintest rung still clears AA */
+  --text-invert: #0e0e10;
+
+  /* ---- hairlines: white at four alphas -------------------------------- */
+  --line-1: rgba(255, 255, 255, 0.07);
+  --line-2: rgba(255, 255, 255, 0.12);
+  --line-3: rgba(255, 255, 255, 0.18);
+  --line-4: rgba(255, 255, 255, 0.28);
+  --line-5: rgba(255, 255, 255, 0.5);
+
+  /* ---- the one accent --------------------------------------------------- */
+  --amber: #d9a441;
+  --amber-dim: rgba(217, 164, 65, 0.16);
+  --amber-line: rgba(217, 164, 65, 0.42);
+
+  /* ---- semantic: used only where the meaning IS the colour ------------- */
+  --ok: #5aa06a;
+  --fail: #c25b4e;
 
   /* ---- controls --------------------------------------------------------- */
-  /* the primary control is the ink itself: a black field, white text. It is
-     the only filled control in the product, so it always means "do it". */
-  --btn-primary: #000000;
-  --btn-primary-hover: #2d2d2d;
-  --btn-primary-active: #1d1d1d;
-  --btn-primary-text: #ffffff;
-  --btn-disabled: #d0d0d0;
-  --btn-disabled-text: #999999;
+  --btn: #f3f3f1;
+  --btn-hover: #ffffff;
+  --btn-text: #0e0e10;
+  --btn-ghost: rgba(255, 255, 255, 0.06);
+  --btn-ghost-hover: rgba(255, 255, 255, 0.1);
+  --btn-disabled: rgba(255, 255, 255, 0.12);
+  --btn-disabled-text: #6b6b68;
 
-  /* the switch: a black pill with a white knob, the way a physical switch
-     reads rather than a coloured toggle */
-  --switch-on: #000000;
-  --switch-off: #d0d0d0;
-  --switch-knob: #ffffff;
-
-  /* ---- the only two shadows in the system ------------------------------- */
-  --shadow-overlay: 0 4px 12px rgba(0, 0, 0, 0.08);
-  --shadow-modal: 0 8px 32px rgba(0, 0, 0, 0.12);
+  /* ---- depth: three shadows, all "closer to the glass" ------------------ */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-3: 0 18px 48px rgba(0, 0, 0, 0.55);
 
   /* ---- geometry --------------------------------------------------------- */
-  --titlebar-h: 44px;
-  --statusbar-h: 36px;
-  --rail-w: 56px;
-  --sidebar-w: 272px;
-  /* the conversation's measure — 720px at 14px is the width large chat
-     interfaces settle on */
-  --thread-measure: 720px;
-  --radius-badge: 4px;
-  --radius-btn: 8px;
-  --radius-card: 12px;
-  --radius-input: 12px;
-  --radius-chat: 22px;
-  --radius-modal: 16px;
+  --titlebar-h: 38px;
+  --statusbar-h: 30px;
+  --sidebar-w: 268px;
+  --rail-w: 48px;
+  --thread-measure: 736px;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 9px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-pill: 999px;
 
   /* ---- motion -----------------------------------------------------------
+     Three speeds. Anything longer than 320ms is a set piece, and this product
+     has no set pieces — it has a stream of small, quick state changes.
+
      Entering is slower than leaving, on purpose: something arriving deserves
      attention and something leaving should not hold the door. */
-  --dur-press: 90ms;
-  --dur-hover: 140ms;
-  --dur-enter: 180ms;
-  --dur-panel: 240ms;
-  --dur-overlay-in: 250ms;
-  --dur-overlay-out: 200ms;
-  --dur-shimmer: 1500ms;
+  --t-fast: 120ms;
+  --t-base: 180ms;
+  --t-slow: 280ms;
+  --t-panel: 320ms;
 
-  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
-  --ease-expo: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --e-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --e-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --e-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
 
   /* ---- texture ---------------------------------------------------------- */
-  --noise-opacity: 0.02;
-  /* the dotted field, the reference's backdrop, drawn in black at a whisper */
-  --dot-color: rgba(0, 0, 0, 0.055);
-  --dot-size: 22px;
+  --grain: 0.028;
+  --dot: rgba(255, 255, 255, 0.045);
+  --dot-size: 24px;
 }
 
-/* A hairline engraved into the surface: the top edge catches the light and the
-   bottom edge keeps a shadow, which is what makes it read as cut rather than
-   printed. Two gradients, no image. */
-.rule-engraved {
+/* A hairline that reads as cut rather than printed. */
+.rule {
   height: 1px;
-  background: linear-gradient(
-    to bottom,
-    color-mix(in srgb, var(--text-1) 16%, transparent),
-    color-mix(in srgb, var(--text-1) 6%, transparent)
-  );
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03));
 }
 
-/* The dotted field. It is felt rather than seen: 5.5% black, one dot every
-   22px, so the canvas has a grain without having a colour. */
+/* The field behind the canvas: one dot every 24px, felt rather than seen. */
 .dotted {
-  background-image: radial-gradient(var(--dot-color) 1.1px, transparent 1.1px);
+  background-image: radial-gradient(var(--dot) 1px, transparent 1px);
   background-size: var(--dot-size) var(--dot-size);
-  background-position: -1px -1px;
 }
 
-/* A micro-grain over the whole window — the difference between a surface and a
-   screen. */
-.noise {
+/* A micro-grain over the whole window. */
+.grain {
   position: absolute;
   inset: 0;
   pointer-events: none;
   z-index: 1;
-  opacity: var(--noise-opacity);
+  opacity: var(--grain);
   background-image: repeating-conic-gradient(
     from 0deg at 50% 50%,
-    rgba(0, 0, 0, 0.85) 0deg 0.6deg,
+    rgba(255, 255, 255, 0.9) 0deg 0.6deg,
     transparent 0.6deg 1.4deg
   );
   background-size: 3px 3px;
-  mix-blend-mode: multiply;
+  mix-blend-mode: overlay;
 }

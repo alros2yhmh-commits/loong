@@ -1,43 +1,62 @@
 import { useEffect } from 'react'
 import { motion } from 'motion/react'
+import { t, e } from '../lib/motion'
 import type { Mode, Trust } from './Composer'
 
 /* ===========================================================================
    The permission menu.
 
-   The reference's shape: a small list of numbered choices, each with the number
-   that selects it, a line saying what it does, and a check on the current one.
-   A menu that explains the choice is worth more than one that names it.
+   No numbers. A number is a keyboard shortcut pretending to be a label — it
+   tells you what to press before it tells you what the thing does. Each row
+   now leads with a glyph, then the name, then the consequence, and the current
+   one is marked.
+
+   Keys 1–4 still work, but they are a bonus for the reader who already knows
+   the list, not the thing the list is built around.
    =========================================================================== */
 
-const CHOICES: { n: number; label: string; detail: string; mode: Mode; trust: Trust }[] = [
+interface Choice {
+  label: string
+  detail: string
+  mode: Mode
+  trust: Trust
+  glyph: React.ReactNode
+}
+
+const ICON = (d: string) => (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+    <path d={d} stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+
+const CHOICES: Choice[] = [
   {
-    n: 1,
-    label: 'Ask permissions',
+    label: 'Ask first',
     detail: 'Every write and command waits for you, with the diff.',
     mode: 'agent',
     trust: 'ask',
+    glyph: ICON('M8 2.4l4.6 2.2v3.6c0 2.8-1.9 4.9-4.6 5.8-2.7-.9-4.6-3-4.6-5.8V4.6L8 2.4z'),
   },
   {
-    n: 2,
-    label: 'Plan mode',
+    label: 'Plan',
     detail: 'Reads and explores, then proposes a plan. It cannot write.',
     mode: 'plan',
     trust: 'ask',
+    glyph: ICON('M3.4 4.2h9.2M3.4 8h9.2M3.4 11.8h5.6'),
   },
   {
-    n: 3,
     label: 'Full trust',
     detail: 'Writes run without asking. The confidence gate still parks what it doubts.',
     mode: 'agent',
     trust: 'auto',
+    glyph: ICON('M8 2.2v11.6M2.2 8h11.6'),
   },
   {
-    n: 4,
-    label: 'Conversation only',
+    label: 'Chat only',
     detail: 'No tools, no reading, no changes. Just the model.',
     mode: 'ask',
     trust: 'ask',
+    glyph: ICON('M3 4.4a1.6 1.6 0 011.6-1.6h6.8A1.6 1.6 0 0113 4.4v4.4a1.6 1.6 0 01-1.6 1.6H6.8L3 13V4.4z'),
   },
 ]
 
@@ -56,24 +75,24 @@ export function ModeMenu({
   onPick: (mode: Mode, trust: Trust) => void
   anchor?: { x: number; y: number } | null
 }) {
-  /* 1–4 select and Esc closes — but only while this menu has the focus. A
-     listener on the window is a listener on the whole app, and a reader typing
-     "2" in the composer must not change their permission mode. */
+  /* keys work only while this menu holds the focus — a listener on the window
+     is a listener on the whole app, and typing "2" in the composer must not
+     change your permission mode */
   useEffect(() => {
     if (!open) return
-    const onKey = (e: KeyboardEvent) => {
+    const onKey = (ev: KeyboardEvent) => {
       const el = document.activeElement
       if (!el || !el.closest('[data-mode-menu]')) return
-      if (e.key === 'Escape') {
-        e.preventDefault()
+      if (ev.key === 'Escape') {
+        ev.preventDefault()
         onClose()
         return
       }
-      const n = Number(e.key)
-      if (n >= 1 && n <= 4) {
+      const n = Number(ev.key)
+      if (n >= 1 && n <= CHOICES.length) {
         const c = CHOICES[n - 1]
         if (c) {
-          e.preventDefault()
+          ev.preventDefault()
           onPick(c.mode, c.trust)
           onClose()
         }
@@ -85,8 +104,7 @@ export function ModeMenu({
 
   if (!open) return null
 
-  const isCurrent = (c: (typeof CHOICES)[number]) =>
-    c.mode === mode && c.trust === trust
+  const isCurrent = (c: Choice) => c.mode === mode && c.trust === trust
 
   return (
     <div className="fixed inset-0 z-[75]" onMouseDown={onClose}>
@@ -94,50 +112,66 @@ export function ModeMenu({
         data-mode-menu
         tabIndex={-1}
         ref={(el) => el?.focus()}
-        initial={{ opacity: 0, y: 6, scale: 0.98 }}
+        initial={{ opacity: 0, y: 8, scale: 0.97 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-        className="absolute w-[336px] overflow-hidden rounded-[14px] p-[5px] outline-none"
+        transition={{ duration: t.base, ease: e.out }}
+        className="absolute w-[330px] overflow-hidden rounded-[12px] p-[5px] outline-none"
         style={{
-          /* clamp both axes: a 336px menu opened near the right edge used to
-             lose its last 100px off the screen */
-          left: Math.max(12, Math.min(anchor?.x ?? 200, window.innerWidth - 336 - 12)),
+          left: Math.max(12, Math.min(anchor?.x ?? 200, window.innerWidth - 330 - 12)),
           bottom: anchor ? Math.max(12, window.innerHeight - anchor.y + 8) : 120,
-          background: 'var(--canvas)',
+          background: 'var(--overlay)',
           border: '1px solid var(--line-3)',
-          boxShadow: 'var(--shadow-modal)',
+          boxShadow: 'var(--shadow-3)',
         }}
-        onMouseDown={(e) => e.stopPropagation()}
+        onMouseDown={(ev) => ev.stopPropagation()}
       >
-        {CHOICES.map((c) => (
-          <button
-            key={c.n}
-            type="button"
-            onClick={() => {
-              onPick(c.mode, c.trust)
-              onClose()
-            }}
-            className="ctl flex w-full items-start gap-[10px] rounded-[9px] px-[10px] py-[9px] text-left"
-            style={{ background: isCurrent(c) ? 'var(--surface-selected)' : 'transparent' }}
-          >
-            <span className="mono mt-[1px] w-[10px] shrink-0 t-tiny" style={{ color: 'var(--text-4)' }}>
-              {c.n}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block t-small" style={{ color: 'var(--text-1)' }}>
-                {c.label}
+        <p
+          className="mono m-0 px-[9px] pt-[5px] pb-[6px] t-tiny tracking-[0.14em] uppercase"
+          style={{ color: 'var(--text-4)' }}
+        >
+          Permissions
+        </p>
+
+        {CHOICES.map((c) => {
+          const current = isCurrent(c)
+          return (
+            <button
+              key={c.label}
+              type="button"
+              onClick={() => {
+                onPick(c.mode, c.trust)
+                onClose()
+              }}
+              className="ctl flex w-full items-start gap-[10px] rounded-[8px] px-[9px] py-[8px] text-left"
+              style={{
+                background: current ? 'var(--selected)' : 'transparent',
+                color: current ? 'var(--text-1)' : 'var(--text-2)',
+              }}
+            >
+              <span
+                className="mt-[1px] shrink-0"
+                style={{ color: current ? 'var(--amber)' : 'var(--text-3)' }}
+              >
+                {c.glyph}
               </span>
-              <span className="block t-tiny leading-[1.5]" style={{ color: 'var(--text-3)' }}>
-                {c.detail}
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center gap-[6px]">
+                  <span className="t-small" style={{ color: current ? 'var(--text-1)' : 'var(--text-2)' }}>
+                    {c.label}
+                  </span>
+                  {current && (
+                    <span className="t-tiny" style={{ color: 'var(--amber)' }}>
+                      current
+                    </span>
+                  )}
+                </span>
+                <span className="block t-tiny leading-[1.5]" style={{ color: 'var(--text-3)' }}>
+                  {c.detail}
+                </span>
               </span>
-            </span>
-            {isCurrent(c) && (
-              <span className="mt-[2px] shrink-0 t-small" style={{ color: 'var(--text-1)' }}>
-                ✓
-              </span>
-            )}
-          </button>
-        ))}
+            </button>
+          )
+        })}
       </motion.div>
     </div>
   )
