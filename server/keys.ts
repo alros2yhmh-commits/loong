@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
+import { chmodSync, readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { DATA_DIR } from './config.ts'
 
@@ -48,7 +48,15 @@ export function loadKeys(): void {
 function flush(): void {
   try {
     mkdirSync(DATA_DIR, { recursive: true })
-    writeFileSync(PATH, JSON.stringify({ ...keys, baseUrls }), 'utf8')
+    /* 0600: owner read and write only. This is NOT encryption — an audit is
+       right to call that out — but it is the difference between a secret that
+       another local account can read and one it cannot, and it costs nothing. */
+    writeFileSync(PATH, JSON.stringify({ ...keys, baseUrls }), { encoding: 'utf8', mode: 0o600 })
+    try {
+      chmodSync(PATH, 0o600)
+    } catch {
+      /* Windows ignores POSIX modes; the ACL already limits it to the user */
+    }
   } catch {
     /* a read-only data dir must not take the agent down */
   }

@@ -5,7 +5,7 @@
    The agent is spawned as a real child with a real cwd, and the interface
    loads over file:// — which is why the API base is absolute in the renderer.
    --------------------------------------------------------------------------- */
-const { app, BrowserWindow, dialog, ipcMain } = require('electron')
+const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron')
 const { spawn } = require('node:child_process')
 const path = require('node:path')
 const fs = require('node:fs')
@@ -75,6 +75,17 @@ app.whenReady().then(() => {
   ipcMain.handle('pick-workspace', async () => {
     const r = await dialog.showOpenDialog({ properties: ['openDirectory'] })
     return r.canceled ? null : r.filePaths[0]
+  })
+
+  ipcMain.handle('open-external', async (_e, url) => {
+    /* only http(s) leaves the app — a file: or javascript: URL is a route, not
+       a link, and neither should be opened from a transcript */
+    try {
+      const u = new URL(String(url))
+      if (u.protocol === 'http:' || u.protocol === 'https:') await shell.openExternal(u.toString())
+    } catch {
+      /* an unparseable link is not worth a dialog */
+    }
   })
 
   startAgent()

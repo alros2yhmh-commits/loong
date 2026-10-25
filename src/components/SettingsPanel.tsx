@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { api, type ProviderInfo, type Settings } from '../lib/api'
 
@@ -50,6 +50,10 @@ export function SettingsPanel({
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [keys, setKeys] = useState<Record<string, { set: boolean; hint: string; baseUrl: string }>>({})
   const [draft, setDraft] = useState<Record<string, string>>({})
+  /* the endpoint is written as you type, not on blur: closing the panel with the
+     caret still in the field used to discard it */
+  const [urlDraft, setUrlDraft] = useState<Record<string, string>>({})
+  const urlTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   /* a save either worked or it did not, and the reader is told which */
   const [saved, setSaved] = useState<{ id: string; ok: boolean; text: string } | null>(null)
 
@@ -284,8 +288,13 @@ export function SettingsPanel({
                           {k.id === 'custom' && (
                             <div className="flex items-center gap-[8px]">
                               <input
-                                defaultValue={status.baseUrl}
-                                onBlur={(e) => void saveBaseUrl(k.id, e.target.value)}
+                                value={urlDraft[k.id] ?? status.baseUrl}
+                                onChange={(e) => {
+                                  const v = e.target.value
+                                  setUrlDraft((d) => ({ ...d, [k.id]: v }))
+                                  clearTimeout(urlTimers.current[k.id])
+                                  urlTimers.current[k.id] = setTimeout(() => void saveBaseUrl(k.id, v), 500)
+                                }}
                                 onKeyDown={(e) => {
                                   if (e.key === 'Enter') void saveBaseUrl(k.id, (e.target as HTMLInputElement).value)
                                 }}

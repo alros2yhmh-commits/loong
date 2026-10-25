@@ -1,7 +1,7 @@
 {
   "name": "loong",
   "private": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
   "author": "Hamza Mahmoud Ramadan",
   "description": "Loong — a desktop coding agent. One brain, real tools, a UI built to be read.",

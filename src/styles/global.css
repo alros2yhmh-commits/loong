@@ -20,7 +20,8 @@ body,
 body {
   background: var(--canvas);
   color: var(--text-1);
-  font-family: 'Inter', 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-family: 'Inter', 'Segoe UI Variable Text', 'Segoe UI', 'Noto Naskh Arabic',
+    'Noto Sans Arabic', 'Dubai', 'Tahoma', system-ui, -apple-system, sans-serif;
   font-size: 13.5px;
   line-height: 20px;
   letter-spacing: -0.004em;
@@ -43,6 +44,12 @@ code, pre, kbd, .mono {
   font-family: 'Berkeley Mono', 'JetBrains Mono', 'Cascadia Mono', Consolas, 'SF Mono', monospace;
   font-variant-ligatures: none;
 }
+
+/* Bidi: a line that mixes Arabic and Latin is set at the same optical size, and
+   the Latin runs are nudged up a hair because Inter's x-height is shorter than
+   a Naskh's. */
+.bidi { unicode-bidi: plaintext; }
+.bidi code, .bidi .mono { font-size: 0.94em; letter-spacing: 0; }
 
 ::selection {
   background: rgba(217, 164, 65, 0.28);
@@ -145,6 +152,19 @@ input, textarea, button {
 /* ---- markdown in the transcript ----------------------------------------- */
 .md > *:first-child { margin-top: 0; }
 .md > *:last-child { margin-bottom: 0; }
+/* A long token — a base64 blob, a minified bundle, a URL — has no space to
+   break at, so it runs out of the column and takes the layout with it. Break
+   anywhere, but only inside content, never in the chrome. */
+.md p, .md li, .md td, .md blockquote {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.md pre, .md code, .mono {
+  overflow-wrap: anywhere;
+}
+.md { max-width: 100%; overflow-x: hidden; }
+.md pre { max-width: 100%; }
+.md img, .md table { max-width: 100%; }
 .md p { margin: 0 0 12px; }
 .md h1, .md h2, .md h3, .md h4 { margin: 20px 0 8px; color: var(--text-1); }
 .md ul, .md ol { margin: 0 0 12px; padding-left: 20px; }

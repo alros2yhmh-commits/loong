@@ -566,7 +566,27 @@ export function Transcript(p: TranscriptProps) {
             return (
               <motion.div key={b.id} variants={rise} initial="initial" animate="animate">
                 <div className="md bidi" dir="auto" style={{ color: 'var(--text-1)' }}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    rehypePlugins={[rehypeSanitize]}
+                    components={{
+                      a: ({ href, children }) => (
+                        <a
+                          href={href}
+                          onClick={(ev) => {
+                            /* never navigate the app; hand it to the OS */
+                            ev.preventDefault()
+                            const bridge = (window as unknown as { loong?: { openExternal?: (u: string) => void } })
+                              .loong
+                            if (href) bridge?.openExternal?.(href)
+                          }}
+                          title={href}
+                        >
+                          {children}
+                        </a>
+                      ),
+                    }}
+                  >
                     {b.text}
                   </ReactMarkdown>
                   {b.streaming && <span className="caret" aria-hidden />}
