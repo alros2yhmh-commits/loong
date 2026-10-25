@@ -202,6 +202,36 @@ export default function App() {
     reload()
   }, [input, settings, activeId, workspace, surface, effectiveMode, stream, reload, readAttachments])
 
+  /** retry the last run: strip any trailing failure blocks and re-run the
+      same history without adding a new user turn */
+  const retry = useCallback(async () => {
+    if (!settings || !activeId) return
+    /* remove trailing failure/noise blocks so the transcript is clean */
+    const clean = stream.blocks.slice()
+    while (clean.length > 0) {
+      const last = clean[clean.length - 1]
+      if (last.k === 'failed' || last.k === 'stop' || last.k === 'notice') {
+        clean.pop()
+      } else {
+        break
+      }
+    }
+    if (clean.length === 0) return
+    stream.setBlocks(clean)
+    setRunningIds((prev) => (activeId && !prev.includes(activeId) ? [...prev, activeId] : prev))
+
+    await stream.run({
+      threadId: activeId,
+      sessionId: activeId,
+      messages: toHistory(clean),
+      settings: { ...settings, mode: effectiveMode },
+    })
+
+    setRunningIds((prev) => prev.filter((x) => x !== activeId))
+    void api.saveBlocks(activeId, stream.blocks).catch(() => {})
+    reload()
+  }, [settings, activeId, effectiveMode, stream, reload])
+
   /* the transcript is persisted whenever it settles, not only on send */
   useEffect(() => {
     if (!activeId || stream.running || stream.blocks.length === 0) return
@@ -446,7 +476,7 @@ export default function App() {
                   running={stream.running}
                   onDecide={(id, approved) => void api.decide(id, approved).catch(() => {})}
                   onAnswer={(id, answer) => void api.answer(id, answer).catch(() => {})}
-                  onRetry={() => void send()}
+                  onRetry={() => void retry()}
                 />
               </div>
             )}

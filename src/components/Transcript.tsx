@@ -150,6 +150,50 @@ function Code({ text, tone = 3, max = 2400 }: { text: string; tone?: 2 | 3; max?
   )
 }
 
+/** long prose is clamped so a single message never owns the whole viewport */
+function ClampedMarkdown({ prose, streaming }: { prose: string; streaming?: boolean }) {
+  const [open, setOpen] = useState(false)
+  const limit = 1200
+  const needsClamp = prose.length > limit && !streaming
+  const visible = open || !needsClamp ? prose : prose.slice(0, limit)
+  return (
+    <>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeSanitize]}
+        components={{
+          a: ({ href, children }) => (
+            <a
+              href={href}
+              onClick={(ev) => {
+                ev.preventDefault()
+                const bridge = (window as unknown as { loong?: { openExternal?: (u: string) => void } })
+                  .loong
+                if (href) bridge?.openExternal?.(href)
+              }}
+              title={href}
+            >
+              {children}
+            </a>
+          ),
+        }}
+      >
+        {visible}
+      </ReactMarkdown>
+      {needsClamp && !open && (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="ctl mt-[6px] inline-block rounded-[6px] px-[10px] py-[3px] t-small"
+          style={{ border: '1px solid var(--line-2)', color: 'var(--text-2)' }}
+        >
+          Read more
+        </button>
+      )}
+    </>
+  )
+}
+
 /* ---- the plan ------------------------------------------------------------ */
 
 const STEP_TONE: Record<PlanStep['status'], { node: NodeState; text: string }> = {
@@ -567,31 +611,7 @@ export function Transcript(p: TranscriptProps) {
             return (
               <motion.div key={b.id} variants={rise} initial="initial" animate="animate">
                 <div className="md bidi" dir="auto" style={{ color: 'var(--text-1)' }}>
-                  {prose && (
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    rehypePlugins={[rehypeSanitize]}
-                    components={{
-                      a: ({ href, children }) => (
-                        <a
-                          href={href}
-                          onClick={(ev) => {
-                            /* never navigate the app; hand it to the OS */
-                            ev.preventDefault()
-                            const bridge = (window as unknown as { loong?: { openExternal?: (u: string) => void } })
-                              .loong
-                            if (href) bridge?.openExternal?.(href)
-                          }}
-                          title={href}
-                        >
-                          {children}
-                        </a>
-                      ),
-                    }}
-                  >
-                    {prose}
-                  </ReactMarkdown>
-                  )}
+                  {prose && <ClampedMarkdown prose={prose} streaming={b.streaming} />}
                   {b.streaming && <span className="caret" aria-hidden />}
                 </div>
 

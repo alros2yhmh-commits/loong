@@ -162,13 +162,25 @@ export function fold(blocks: Block[], e: AgentEvent): Block[] {
       return next
 
     case 'RUN_ERROR': {
-      next.push({
-        k: 'failed',
-        id: newId(),
-        cause: e.message ?? 'the run failed',
-        detail: e.message ?? '',
-        at,
-      })
+      const last = next[next.length - 1]
+      if (last && last.k === 'failed') {
+        /* replace the previous failure instead of stacking duplicates */
+        next[next.length - 1] = {
+          k: 'failed',
+          id: last.id,
+          cause: e.message ?? 'the run failed',
+          detail: e.message ?? '',
+          at,
+        }
+      } else {
+        next.push({
+          k: 'failed',
+          id: newId(),
+          cause: e.message ?? 'the run failed',
+          detail: e.message ?? '',
+          at,
+        })
+      }
       return next
     }
 
@@ -272,14 +284,28 @@ export function fold(blocks: Block[], e: AgentEvent): Block[] {
       return next
     }
     case 'loong.run_failed': {
-      next.push({
-        k: 'failed',
-        id: newId(),
-        cause: String(v.cause ?? ''),
-        detail: String(v.detail ?? ''),
-        model: v.model ? String(v.model) : undefined,
-        at,
-      })
+      const cause = String(v.cause ?? '')
+      const last = next[next.length - 1]
+      if (last && last.k === 'failed' && last.cause === cause) {
+        /* same failure cause — replace, don't stack */
+        next[next.length - 1] = {
+          k: 'failed',
+          id: last.id,
+          cause,
+          detail: String(v.detail ?? ''),
+          model: v.model ? String(v.model) : undefined,
+          at,
+        }
+      } else {
+        next.push({
+          k: 'failed',
+          id: newId(),
+          cause,
+          detail: String(v.detail ?? ''),
+          model: v.model ? String(v.model) : undefined,
+          at,
+        })
+      }
       return next
     }
     default:
