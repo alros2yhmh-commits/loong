@@ -19,13 +19,15 @@
 :root {
   color-scheme: dark;
 
-  /* ---- surfaces: four steps, each a little lighter than the one below ---- */
-  --canvas: #0e0e10;
-  --surface: #141416;
-  --raised: #1a1a1d;
-  --overlay: #202024;
-  --selected: #26262b;
-  --hover: #1e1e22;
+  /* ---- surfaces: four steps, each a little lighter than the one below ----
+     The canvas is a breathing dark grey, not black — pure black reads as a
+     void the eye avoids, a soft charcoal reads as a surface you can live in. */
+  --canvas: #1a1a1e;
+  --surface: #202024;
+  --raised: #26262b;
+  --overlay: #2c2c32;
+  --selected: #32323a;
+  --hover: #2a2a30;
 
   /* ---- ink: 15.8 · 8.4 · 5.2 · 3.9 ------------------------------------- */
   --text-1: #f4f4f2; /* 16.1:1 on --surface */
@@ -96,9 +98,11 @@
   --e-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --e-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
 
-  /* ---- texture ---------------------------------------------------------- */
-  --grain: 0.028;
-  --dot: rgba(255, 255, 255, 0.045);
+  /* ---- texture ----------------------------------------------------------
+     The dot field is felt, not seen: raised just enough that the surface reads
+     as paper under a lamp rather than a flat void. The grain is a faint tooth. */
+  --grain: 0.04;
+  --dot: rgba(255, 255, 255, 0.06);
   --dot-size: 24px;
 }
 

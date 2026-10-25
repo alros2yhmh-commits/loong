@@ -15,9 +15,17 @@ import { t, e } from '../lib/motion'
    =========================================================================== */
 
 /** the star: twelve points, drawn slightly off, filled with the ink */
-export function Mark({ size = 16, tone = 'ink' }: { size?: number; tone?: 'ink' | 'amber' }) {
+export function Mark({ size = 16, tone = 'ink', spin = false }: { size?: number; tone?: 'ink' | 'amber'; spin?: boolean }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 48 48" aria-hidden style={{ display: 'block' }}>
+    <motion.svg
+      width={size}
+      height={size}
+      viewBox="0 0 48 48"
+      aria-hidden
+      animate={spin ? { rotate: 360 } : undefined}
+      transition={spin ? { duration: 12, repeat: Infinity, ease: 'linear' } : undefined}
+      style={{ display: 'block' }}
+    >
       <g fill={tone === 'amber' ? 'var(--amber)' : 'var(--text-1)'}>
         {[0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330].map((deg, i) => (
           <rect
@@ -32,7 +40,7 @@ export function Mark({ size = 16, tone = 'ink' }: { size?: number; tone?: 'ink' 
         ))}
         <circle cx="24" cy="24" r="7.4" />
       </g>
-    </svg>
+    </motion.svg>
   )
 }
 
@@ -41,12 +49,14 @@ export type Mood = 'idle' | 'working' | 'waiting' | 'happy' | 'failed'
 /**
  * The creature.
  *
- * Idle behaviour is deliberately small: a slow breath, and a blink every few
- * seconds. It is company, not a spinner — anything busier competes with the
- * work in the transcript.
+ * Idle behaviour is deliberately small: a slow breath, a blink every couple of
+ * seconds, and — when it is working — a slow turn of the head, as if it is
+ * reading the folder. It is company, not a spinner; anything busier competes
+ * with the work in the transcript.
  */
 export function Dragon({ size = 96, mood = 'idle' }: { size?: number; mood?: Mood }) {
   const ink = mood === 'failed' ? 'var(--text-3)' : 'var(--amber)'
+  const active = mood === 'working' || mood === 'happy'
 
   const bob =
     mood === 'working'
@@ -56,6 +66,16 @@ export function Dragon({ size = 96, mood = 'idle' }: { size?: number; mood?: Moo
         : mood === 'happy'
           ? { y: [0, -5, 0], transition: { duration: 0.5, repeat: 1, ease: e.out } }
           : { y: [0, -1.5, 0], transition: { duration: 3.6, repeat: Infinity, ease: 'easeInOut' as const } }
+
+  /* the head turns when the creature is alive, stills when it is idle */
+  const headTilt = active
+    ? { rotate: [-3, 3, -2, 3, -3], transition: { duration: 4.2, repeat: Infinity, ease: 'easeInOut' as const } }
+    : mood === 'waiting'
+      ? { rotate: [0, 4, 0, -4, 0], transition: { duration: 5, repeat: Infinity, ease: 'easeInOut' as const } }
+      : { rotate: 0 }
+
+  /* faster blink when working (it is concentrating), slower when idle */
+  const blinkDur = active ? 1.8 : 2.6
 
   return (
     <motion.svg
@@ -74,21 +94,24 @@ export function Dragon({ size = 96, mood = 'idle' }: { size?: number; mood?: Moo
         <path d="M40.6 82.6c-1.4 4.6-2 8.6-1.6 12" />
         <path d="M60 83.6c0 4.6.2 8.4.6 11.4" />
         <path d="M79 82.2c1.6 4.6 2.2 8.6 1.8 12" />
-        {/* the antenna: the creature's only flourish */}
-        <path d="M60.4 32.8c.4-4.2 1.6-7.2 3.4-9.4" strokeWidth="3" />
       </g>
 
-      <circle cx="64.6" cy="21.4" r="2.6" fill={ink} />
+      {/* the head: the antenna, the crown dot and the eyes turn together, so the
+          creature reads as looking around rather than just pulsing */}
+      <motion.g style={{ transformOrigin: '60px 48px' }} animate={headTilt}>
+        <path d="M60.4 32.8c.4-4.2 1.6-7.2 3.4-9.4" stroke={ink} strokeWidth="3" fill="none" strokeLinecap="round" />
+        <circle cx="64.6" cy="21.4" r="2.6" fill={ink} />
 
-      {/* the eyes: two dots, blinking on their own clock */}
-      <motion.g
-        fill={ink}
-        animate={{ scaleY: [1, 1, 0.1, 1, 1] }}
-        transition={{ duration: 5.6, times: [0, 0.86, 0.9, 0.94, 1], repeat: Infinity, repeatDelay: 1.8 }}
-        style={{ transformOrigin: '60px 55px' }}
-      >
-        <circle cx="50.4" cy="54.6" r="2.6" />
-        <circle cx="69.2" cy="54.2" r="2.6" />
+        {/* the eyes: two dots, blinking on their own clock */}
+        <motion.g
+          fill={ink}
+          animate={{ scaleY: [1, 1, 0.1, 1, 1] }}
+          transition={{ duration: blinkDur, times: [0, 0.9, 0.94, 0.98, 1], repeat: Infinity, repeatDelay: 0.6 }}
+          style={{ transformOrigin: '60px 55px' }}
+        >
+          <circle cx="50.4" cy="54.6" r="2.6" />
+          <circle cx="69.2" cy="54.2" r="2.6" />
+        </motion.g>
       </motion.g>
 
       {/* waiting: a small amber halo, so the state is visible without words */}

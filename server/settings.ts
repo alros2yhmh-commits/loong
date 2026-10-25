@@ -128,7 +128,7 @@ function clean(input: unknown): Settings {
     soundEnabled: typeof raw.soundEnabled === 'boolean' ? raw.soundEnabled : DEFAULT_SETTINGS.soundEnabled,
     volume: typeof raw.volume === 'number' ? clamp(raw.volume, 0, 1) : DEFAULT_SETTINGS.volume,
     reducedMotion: typeof raw.reducedMotion === 'boolean' ? raw.reducedMotion : DEFAULT_SETTINGS.reducedMotion,
-    fontSize: typeof raw.fontSize === 'number' ? clamp(Math.round(raw.fontSize), 11, 20) : DEFAULT_SETTINGS.fontSize,
+    fontSize: typeof raw.fontSize === 'number' ? clamp(Math.round(raw.fontSize), 11, 24) : DEFAULT_SETTINGS.fontSize,
     view: pick(raw.view, ['normal', 'thinking', 'verbose'] as const, DEFAULT_SETTINGS.view),
     userName: typeof raw.userName === 'string' ? raw.userName.slice(0, 40) : DEFAULT_SETTINGS.userName,
   }

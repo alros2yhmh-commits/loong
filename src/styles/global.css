@@ -55,15 +55,18 @@ code, pre, kbd, .mono {
   background: rgba(217, 164, 65, 0.28);
 }
 
-/* ---- the type ladder ----------------------------------------------------- */
-.t-h1 { font-size: 24px; line-height: 32px; font-weight: 600; letter-spacing: -0.02em; }
-.t-h2 { font-size: 18px; line-height: 25px; font-weight: 600; letter-spacing: -0.015em; }
-.t-h3 { font-size: 15px; line-height: 21px; font-weight: 600; letter-spacing: -0.01em; }
-.t-body { font-size: 13.5px; line-height: 21px; font-weight: 400; }
-.t-small { font-size: 12.5px; line-height: 18px; font-weight: 400; }
-.t-caption { font-size: 11.5px; line-height: 16px; font-weight: 400; }
-.t-tiny { font-size: 10.5px; line-height: 14px; font-weight: 500; }
-.t-code { font-size: 12.5px; line-height: 19px; font-weight: 400; }
+/* ---- the type ladder -----------------------------------------------------
+   Sizes are in em, not px. The app root sets font-size from the Thread-text
+   slider, so every size below scales with it — the slider finally moves text
+   instead of being a number nothing reads. 14px is the 1em baseline. */
+.t-h1 { font-size: 1.71em; line-height: 1.33em; font-weight: 600; letter-spacing: -0.02em; }
+.t-h2 { font-size: 1.29em; line-height: 1.39em; font-weight: 600; letter-spacing: -0.015em; }
+.t-h3 { font-size: 1.07em; line-height: 1.4em; font-weight: 600; letter-spacing: -0.01em; }
+.t-body { font-size: 0.96em; line-height: 1.55em; font-weight: 400; }
+.t-small { font-size: 0.89em; line-height: 1.44em; font-weight: 400; }
+.t-caption { font-size: 0.82em; line-height: 1.39em; font-weight: 400; }
+.t-tiny { font-size: 0.75em; line-height: 1.33em; font-weight: 500; }
+.t-code { font-size: 0.89em; line-height: 1.52em; font-weight: 400; }
 
 /* ---- interactive base ----------------------------------------------------
    Every control has a hover, a press and a focus ring. A control with no press
@@ -223,6 +226,56 @@ input, textarea, button {
 }
 .live { animation: live 1.5s ease-in-out infinite; }
 
+/* ---- the living canvas -------------------------------------------------
+   The dot field is not a static texture: it drifts so the surface feels like
+   it is breathing, not printed. Slow enough that the eye reads it as ambient
+   life, not motion that competes with the transcript. */
+@keyframes drift {
+  0% { background-position: 0 0; }
+  100% { background-position: 48px 48px; }
+}
+
+/* The grain is nudged a hair on a slow loop so it shimmers like real paper
+   tooth under a lamp, instead of a flat fill. */
+@keyframes grainShift {
+  0% { transform: translate(0, 0); }
+  25% { transform: translate(-1px, 1px); }
+  50% { transform: translate(1px, -1px); }
+  75% { transform: translate(-1px, 0); }
+  100% { transform: translate(0, 0); }
+}
+
+/* A sweep used to draw attention to a freshly changed region (the diff, a new
+   approval) without a loud colour flash. */
+@keyframes sweep {
+  0% { background-position: -120% 0; }
+  100% { background-position: 220% 0; }
+}
+
+/* A one-shot flash for a state that just changed — a check landing, a file
+   arriving. Short and quiet. */
+@keyframes flash {
+  0% { opacity: 0.0; }
+  30% { opacity: 1; }
+  100% { opacity: 0.55; }
+}
+
+/* The shell paints the canvas + drifting dots; children sit above it. */
+.shell {
+  position: relative;
+  background-color: var(--canvas);
+  background-image: radial-gradient(var(--dot) 1px, transparent 1px);
+  background-size: var(--dot-size) var(--dot-size);
+  animation: drift 26s linear infinite;
+}
+
+/* The grain lives above the content as a faint overlay. pointer-events:none so
+   it never steals a click; z-index keeps it over the transcript but under
+   popovers (which use z-50+). */
+.grain {
+  animation: grainShift 1.4s steps(3) infinite;
+}
+
 /* ---- reduced motion ------------------------------------------------------
    A real mode, not a shorter duration. */
 @media (prefers-reduced-motion: reduce) {
@@ -232,6 +285,7 @@ input, textarea, button {
     transition-duration: 0.01ms !important;
   }
   .grain { display: none; }
+  .shell { animation: none; background-position: 0 0; }
   .caret { animation: none; opacity: 1; }
   .breathe, .live { animation: none; opacity: 1; }
 }

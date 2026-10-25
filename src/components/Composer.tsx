@@ -39,6 +39,7 @@ export interface ComposerProps {
   onOpenModeMenu: () => void
   onAttach?: (files: File[]) => void
   attachments?: File[]
+  onRemoveAttachment?: (index: number) => void
 }
 
 const MODE_LABEL: Record<Mode, string> = { agent: 'Agent', plan: 'Plan', ask: 'Chat' }
@@ -142,8 +143,40 @@ export function Composer(p: ComposerProps) {
             />
 
             {p.attachments && p.attachments.length > 0 && (
-              <span className="t-tiny" style={{ color: 'var(--text-3)' }}>
-                {p.attachments.length} file{p.attachments.length > 1 ? 's' : ''}
+              <span className="flex flex-wrap items-center gap-[5px]">
+                {p.attachments.map((f, i) => {
+                  const isImg = f.type.startsWith('image/')
+                  const isText =
+                    f.type.startsWith('text/') ||
+                    /\.(md|txt|json|ts|tsx|js|jsx|css|html|yml|yaml|csv|log|toml|py|go|rs|java|c|h|cpp|sh)$/i.test(f.name)
+                  const tag = isImg ? 'IMG' : isText ? 'TXT' : 'FILE'
+                  return (
+                    <span
+                      key={i}
+                      className="flex items-center gap-[5px] rounded-[7px] px-[7px] py-[3px]"
+                      style={{ border: '1px solid var(--line-2)', background: 'var(--surface)' }}
+                      title={f.name}
+                    >
+                      <span className="mono t-tiny" style={{ color: 'var(--text-3)' }}>
+                        {tag}
+                      </span>
+                      <span className="t-tiny max-w-[150px] truncate" style={{ color: 'var(--text-2)' }}>
+                        {f.name}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={`Remove ${f.name}`}
+                        onClick={() => p.onRemoveAttachment?.(i)}
+                        className="ctl grid h-[14px] w-[14px] place-items-center rounded-[4px]"
+                        style={{ color: 'var(--text-3)' }}
+                      >
+                        <svg width="8" height="8" viewBox="0 0 10 10" fill="none" aria-hidden>
+                          <path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                        </svg>
+                      </button>
+                    </span>
+                  )
+                })}
               </span>
             )}
 

@@ -171,7 +171,7 @@ export function SettingsPanel({
                         <input
                           type="range"
                           min={11}
-                          max={20}
+                          max={24}
                           value={settings.fontSize}
                           onChange={(e) => onChange({ fontSize: Number(e.target.value) })}
                           aria-label="Thread text size"

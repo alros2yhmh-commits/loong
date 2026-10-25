@@ -137,25 +137,39 @@ export default function App() {
   }, [])
 
   /* ---- running ----------------------------------------------------------- */
-  /* A text file is read and inlined. Anything else is refused out loud rather
-     than dropped silently. */
+  /* A text file is read and inlined. An image is embedded as a data URL (capped,
+     so a huge screenshot does not blow the context). Anything else is attached as
+     a named reference the agent can act on — nothing is dropped silently. */
+  const TEXT_RE = /\.(md|txt|json|ts|tsx|js|jsx|css|html|yml|yaml|csv|log|toml|py|go|rs|java|c|h|cpp|sh)$/i
   const readAttachments = useCallback(async (): Promise<{ body: string; refused: string[] }> => {
     const refused: string[] = []
     const parts: string[] = []
     for (const f of attachments) {
-      const isText =
-        f.type.startsWith('text/') ||
-        /\.(md|txt|json|ts|tsx|js|jsx|css|html|yml|yaml|csv|log|toml|py|go|rs|java|c|h|cpp|sh)$/i.test(f.name)
-      if (!isText) {
-        refused.push(f.name)
+      const isText = f.type.startsWith('text/') || TEXT_RE.test(f.name)
+      if (isText) {
+        if (f.size > 200_000) {
+          refused.push(`${f.name} (too large to read)`)
+          continue
+        }
+        const body = await f.text()
+        parts.push(`--- ${f.name} ---\n${body}`)
         continue
       }
-      if (f.size > 200_000) {
-        refused.push(`${f.name} (too large)`)
+      if (f.type.startsWith('image/')) {
+        if (f.size > 1_500_000) {
+          parts.push(`--- ${f.name} (image, ${Math.round(f.size / 1024)}KB, too large to embed) ---`)
+          continue
+        }
+        const buf = await f.arrayBuffer()
+        const bytes = new Uint8Array(buf)
+        let bin = ''
+        for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
+        const dataUrl = `data:${f.type};base64,${btoa(bin)}`
+        parts.push(`--- ${f.name} (image) ---\n![${f.name}](${dataUrl})`)
         continue
       }
-      const body = await f.text()
-      parts.push(`--- ${f.name} ---\n${body}`)
+      /* other binary — a reference the agent can mention or act on */
+      parts.push(`--- ${f.name} (${f.type || 'file'}, ${Math.round(f.size / 1024)}KB) ---\n[attached file — reference only, not inlined]`)
     }
     return { body: parts.join('\n\n'), refused }
   }, [attachments])
@@ -166,7 +180,7 @@ export default function App() {
     const text = [typed, attached].filter(Boolean).join('\n\n')
     if (!text || !settings) return
     if (refused.length) {
-      setNotice(`not sent: ${refused.join(', ')} — this endpoint takes text only`)
+      setNotice(`could not attach: ${refused.join(', ')}`)
     }
     setAttachments([])
     let id = activeId
@@ -330,6 +344,7 @@ export default function App() {
       onPickModel={() => setModelPicker(true)}
       attachments={attachments}
       onAttach={(files) => setAttachments((prev) => [...prev, ...files])}
+      onRemoveAttachment={(i) => setAttachments((prev) => prev.filter((_, idx) => idx !== i))}
       blockedReason={blockedReason}
       onOpenModeMenu={() => {
         const el = document.querySelector('[aria-label="Permission mode"]')
@@ -341,7 +356,16 @@ export default function App() {
 
 
   return (
-    <div className="flex h-full w-full flex-col" style={{ background: 'var(--canvas)' }}>
+    <div
+      className="shell flex h-full w-full flex-col"
+      style={{
+        /* The dotted canvas + its slow drift live on `.shell` (global.css); the
+           grain overlay is the `.grain` child below. One knob the whole type
+           ramp hangs off of: the app root's font-size, so the Thread-text
+           slider actually moves text instead of being a number nothing reads. */
+        fontSize: `${settings?.fontSize ?? 14}px`,
+      }}
+    >
       {/* ---- the title bar 44px ------------------------------------------- */}
       <header
         className="flex h-[38px] shrink-0 items-center gap-[10px] pl-[12px] pr-[146px]"
@@ -378,6 +402,26 @@ export default function App() {
             <span className="min-w-0 truncate t-caption" style={{ color: 'var(--text-3)' }}>
               {sessions.find((x) => x.id === activeId)?.title ?? ''}
             </span>
+            {surface === 'code' && (
+              <button
+                type="button"
+                className="ctl flex shrink-0 items-center gap-[5px] rounded-[6px] px-[8px] py-[3px] t-tiny"
+                style={{ color: 'var(--text-3)', border: '1px solid var(--line-2)' }}
+                onClick={() => setDiffOpen(true)}
+                title="Review changes in this folder — Ctrl Shift D"
+              >
+                <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden>
+                  <path
+                    d="M7 2.5l-4 5 4 5M9 2.5l4 5-4 5"
+                    stroke="currentColor"
+                    strokeWidth="1.3"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                Changes
+              </button>
+            )}
           </>
         )}
       </header>
@@ -474,6 +518,7 @@ export default function App() {
                   blocks={stream.blocks}
                   view={settings?.view ?? 'normal'}
                   running={stream.running}
+                  phase={stream.phase}
                   onDecide={(id, approved) => void api.decide(id, approved).catch(() => {})}
                   onAnswer={(id, answer) => void api.answer(id, answer).catch(() => {})}
                   onRetry={() => void retry()}
@@ -609,6 +654,9 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* the grain overlay — a faint tooth over the whole window, never interactive */}
+      <div className="grain" />
     </div>
   )
 }

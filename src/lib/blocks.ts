@@ -161,28 +161,11 @@ export function fold(blocks: Block[], e: AgentEvent): Block[] {
     case 'STEP_STARTED':
       return next
 
-    case 'RUN_ERROR': {
-      const last = next[next.length - 1]
-      if (last && last.k === 'failed') {
-        /* replace the previous failure instead of stacking duplicates */
-        next[next.length - 1] = {
-          k: 'failed',
-          id: last.id,
-          cause: e.message ?? 'the run failed',
-          detail: e.message ?? '',
-          at,
-        }
-      } else {
-        next.push({
-          k: 'failed',
-          id: newId(),
-          cause: e.message ?? 'the run failed',
-          detail: e.message ?? '',
-          at,
-        })
-      }
+    case 'RUN_ERROR':
+      /* RUN_ERROR is always followed by loong.run_failed, which creates the
+         actual failed block with structured data (cause, detail, model).
+         Creating a block here would produce a duplicate. */
       return next
-    }
 
     default:
       break
@@ -285,12 +268,28 @@ export function fold(blocks: Block[], e: AgentEvent): Block[] {
     }
     case 'loong.run_failed': {
       const cause = String(v.cause ?? '')
-      const last = next[next.length - 1]
-      if (last && last.k === 'failed' && last.cause === cause) {
-        /* same failure cause — replace, don't stack */
-        next[next.length - 1] = {
+      /* A run can emit the same failure more than once — once per retry attempt,
+         or once as a transient notice and once as the structured failure. Collapse
+         every failure that shares a cause into ONE block, even when other blocks
+         (a notice, a retry, a fresh tool call) sit between them. The transcript
+         shows a single failed card, never a stack of identical ones. */
+      let replaceAt = -1
+      for (let i = next.length - 1; i >= 0; i--) {
+        const b = next[i]
+        if (b.k !== 'failed') continue
+        if (b.cause === cause || (cause === '' && b.cause === '')) {
+          replaceAt = i
+          break
+        }
+        /* a newer failure with a DIFFERENT cause means this cause is genuinely
+           separate, so stop looking and append a new card */
+        break
+      }
+      if (replaceAt >= 0) {
+        const id = next[replaceAt].id
+        next[replaceAt] = {
           k: 'failed',
-          id: last.id,
+          id,
           cause,
           detail: String(v.detail ?? ''),
           model: v.model ? String(v.model) : undefined,

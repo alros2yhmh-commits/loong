@@ -26,6 +26,7 @@ export interface TranscriptProps {
   blocks: Block[]
   view: 'normal' | 'thinking' | 'verbose'
   running: boolean
+  phase?: string | null
   onDecide: (id: string, approved: boolean) => void
   onAnswer: (id: string, answer: string | null) => void
   onRetry: () => void
@@ -256,7 +257,7 @@ function PlanCard({ plan }: { plan: Plan }) {
               className="flex items-start gap-[9px] py-[3px]"
             >
               <span className="mono mt-[2px] w-[13px] shrink-0 t-tiny" style={{ color: 'var(--text-3)' }}>
-                {s.status === 'done' ? '✓' : s.status === 'in_progress' ? '▸' : s.status === 'blocked' ? '×' : i + 1}
+                {s.status === 'done' ? '✓' : s.status === 'in_progress' ? '▸' : s.status === 'blocked' ? '⊘' : i + 1}
               </span>
               <span
                 className="bidi min-w-0 flex-1 t-small leading-[1.55]"
@@ -525,7 +526,7 @@ function AuditCard({ audit }: { audit: Audit }) {
         {(audit.items ?? []).map((it, i) => (
           <li key={i} className="flex items-start gap-[8px] py-[3px]">
             <span className="mt-[1px] shrink-0 t-small" style={{ color: it.met ? 'var(--ok)' : 'var(--fail)' }}>
-              {it.met ? '✓' : '×'}
+              {it.met ? '✓' : '⊘'}
             </span>
             <span className="min-w-0 flex-1">
               <span className="bidi block t-small" style={{ color: 'var(--text-2)' }}>
@@ -590,7 +591,7 @@ export function Transcript(p: TranscriptProps) {
       className="mx-auto flex w-full flex-col gap-[14px] px-[28px] py-[20px]"
       style={{ maxWidth: 'var(--thread-measure)' }}
     >
-      {p.blocks.map((b) => {
+      {p.blocks.map((b, i) => {
         switch (b.k) {
           case 'user':
             return (
@@ -647,7 +648,55 @@ export function Transcript(p: TranscriptProps) {
               </motion.div>
             )
 
-          case 'tool':
+          case 'tool': {
+            /* group a long run of the same tool (e.g. 50 read_file) into one
+               row that says how many there were, instead of a wall of rows. */
+            const prev = p.blocks[i - 1]
+            const next = p.blocks[i + 1]
+            const samePrev = prev?.k === 'tool' && prev.tool === b.tool
+            const sameNext = next?.k === 'tool' && next.tool === b.tool
+            if (samePrev) return null
+            let count = 1
+            if (sameNext) {
+              let j = i + 1
+              while (true) {
+                const c = p.blocks[j]
+                if (!c || c.k !== 'tool' || c.tool !== b.tool) break
+                count++
+                j++
+              }
+            }
+            if (count > 2) {
+              const group = p.blocks.slice(i, i + count) as Extract<Block, { k: 'tool' }>[]
+              const live = group.some((g) => g.live)
+              const failed = group.some((g) => g.ok === false)
+              const totalMs = group.reduce((s, g) => s + (g.ms ?? 0), 0)
+              return (
+                <motion.div key={`grp-${b.id}`} variants={rise} initial="initial" animate="animate">
+                  <RailRow
+                    state={live ? 'live' : failed ? 'failed' : 'done'}
+                    label={<span className="mono">{b.tool}</span>}
+                    meta={<span>{count} calls · {live ? 'running' : `${(totalMs / 1000).toFixed(1)}s`}</span>}
+                    startOpen={verbose}
+                  >
+                    <div className="flex flex-col gap-[6px]">
+                      {group.slice(0, verbose ? group.length : 3).map((g) => (
+                        <div key={g.id} className="flex flex-col gap-[4px]">
+                          <span className="mono t-tiny" style={{ color: 'var(--text-3)' }}>{g.wire}{g.ms ? ` · ${(g.ms / 1000).toFixed(1)}s` : ''}</span>
+                          {g.args && <Code text={g.args} tone={3} max={700} />}
+                          {g.result && <Code text={g.result} tone={2} max={700} />}
+                        </div>
+                      ))}
+                      {!verbose && count > 3 && (
+                        <span className="t-tiny" style={{ color: 'var(--text-3)' }}>
+                          +{count - 3} more · open Verbose view to see all
+                        </span>
+                      )}
+                    </div>
+                  </RailRow>
+                </motion.div>
+              )
+            }
             return (
               <motion.div key={b.id} variants={rise} initial="initial" animate="animate">
                 <RailRow
@@ -667,6 +716,7 @@ export function Transcript(p: TranscriptProps) {
                 </RailRow>
               </motion.div>
             )
+          }
 
           case 'plan':
             return <PlanCard key={b.id} plan={b.plan} />
@@ -684,7 +734,7 @@ export function Transcript(p: TranscriptProps) {
             return (
               <motion.div key={b.id} variants={rise} initial="initial" animate="animate" className="flex items-baseline gap-[8px] px-[6px]">
                 <span className="t-small" style={{ color: b.ok ? 'var(--ok)' : 'var(--fail)' }}>
-                  {b.ok ? '✓' : '×'}
+                  {b.ok ? '✓' : '⊘'}
                 </span>
                 <span className="bidi t-small" style={{ color: 'var(--text-2)' }}>
                   {b.label}
@@ -778,8 +828,29 @@ export function Transcript(p: TranscriptProps) {
           animate={{ opacity: 1 }}
           className="flex items-center gap-[8px] pl-[2px]"
         >
-          <Dragon size={22} mood="working" />
-          <Working label="working" />
+          <Dragon
+            size={22}
+            mood={
+              p.phase === 'waiting'
+                ? 'waiting'
+                : p.phase === 'thinking' || p.phase === 'tool'
+                  ? 'working'
+                  : 'working'
+            }
+          />
+          <Working
+            label={
+              p.phase === 'thinking'
+                ? 'thinking'
+                : p.phase === 'tool'
+                  ? 'running tool'
+                  : p.phase === 'waiting'
+                    ? 'waiting for you'
+                    : p.phase === 'streaming'
+                      ? 'writing'
+                      : 'working'
+            }
+          />
         </motion.div>
       )}
     </div>

@@ -23,7 +23,7 @@ export interface StatusBarProps {
 const PHASE_WORD: Record<string, string> = {
   thinking: 'thinking',
   streaming: 'writing',
-  tool: 'working',
+  tool: 'running tool',
   waiting: 'waiting for you',
 }
 

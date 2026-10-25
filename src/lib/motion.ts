@@ -21,17 +21,27 @@ export const t = {
   base: 0.18,
   slow: 0.28,
   panel: 0.32,
+  /* a reveal is the longest entrance we allow: a whole region arriving, never a
+     set piece. Pulse is a loop period, not a transition. */
+  reveal: 0.42,
+  pulse: 1.4,
 } as const
 
 export const e = {
   out: [0.22, 1, 0.36, 1] as const,
   inOut: [0.65, 0, 0.35, 1] as const,
   spring: [0.34, 1.4, 0.64, 1] as const,
+  /* an overshoot so a pop lands with a little life, then settles */
+  overshoot: [0.34, 1.56, 0.64, 1] as const,
 }
 
 export const spring = {
   soft: { type: 'spring', stiffness: 320, damping: 30, mass: 0.7 },
   snappy: { type: 'spring', stiffness: 520, damping: 32, mass: 0.6 },
+  /* a long, low spring for things that should feel like they ease in, not snap */
+  gentle: { type: 'spring', stiffness: 200, damping: 26, mass: 0.7 },
+  /* a quick, tight spring for badges and pills that should pop and hold */
+  pop: { type: 'spring', stiffness: 600, damping: 24, mass: 0.5 },
 } as const
 
 /** a row arriving in a list or a stream */
