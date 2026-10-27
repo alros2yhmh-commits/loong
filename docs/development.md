@@ -9,7 +9,8 @@
 | Current desktop shell | Electron 44.9.3; its bundled Node runs the compiled CommonJS sidecar |
 | Installer targets in CI | Windows x64 NSIS, Linux x64 AppImage |
 
-Development executes `.ts` server entrypoints directly with Node 24. The pinned Electron 44.9.3 sidecar also runs Node 24. The desktop runtime is checked with `npm run smoke:runtime` rather than inferred from the development Node version. Keep runtime, native modules, and dependency security updates tested together; any persistence migration still needs packaged-app compatibility and data-recovery tests.
+Development executes `.ts` server entrypoints directly with Node 24. The pinned Electron 44.9.3 sidecar also runs Node 24. The desktop runtime is checked with `npm run install:desktop
+npm run smoke:runtime` rather than inferred from the development Node version. Keep runtime, native modules, and dependency security updates tested together; any persistence migration still needs packaged-app compatibility and data-recovery tests.
 
 ## Windows prerequisites
 
@@ -22,6 +23,7 @@ npm ci
 npm test
 npm run build
 npm run smoke:bundle
+npm run install:desktop
 npm run smoke:runtime
 npm run desktop
 ```
@@ -62,6 +64,7 @@ npm test
 npm run eval:check
 npm run build
 npm run smoke:bundle
+npm run install:desktop
 npm run smoke:runtime
 npm run smoke:desktop
 ```

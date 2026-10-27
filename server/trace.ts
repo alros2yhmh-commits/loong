@@ -35,6 +35,7 @@ export interface RunTrace {
   /** the wall-clock time of the run, derived from at/endedAt */
   ms: number
   outcome: 'ok' | 'error' | 'aborted'
+  status?: 'completed' | 'partial' | 'blocked' | 'budget_exhausted' | 'cancelled' | 'failed'
   error?: string
 }
 
@@ -74,6 +75,8 @@ export function recordToolSpan(runId: string, tool: string, ms: number): void {
 export function endTrace(
   runId: string,
   patch: {
+    model?: string
+    status?: RunTrace['status']
     promptTokens?: number
     completionTokens?: number
     outcome: RunTrace['outcome']
@@ -86,6 +89,8 @@ export function endTrace(
   const endedAt = Date.now()
   const record: RunTrace = {
     ...t,
+    model: patch.model ?? t.model,
+    ...(patch.status ? { status: patch.status } : {}),
     endedAt,
     ms: endedAt - t.at,
     promptTokens: patch.promptTokens ?? 0,

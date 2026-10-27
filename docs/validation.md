@@ -4,7 +4,8 @@ This file records executed checks separately from planned or externally blocked 
 
 ## Checks executed during development
 
-- Linux Node24: full automated suite passed (391 tests at the recorded baseline; later regression additions are counted by the current runner).
+- Linux Node24: full automated suite passed (400 tests, with zero failures and zero skipped tests).
+- `npm audit --omit=dev` reported zero known production vulnerabilities after removing unused/vulnerable AG-UI client/protobuf dependencies. Recheck advisories for later releases; this is not a guarantee against unknown vulnerabilities.
 - Frontend and server TypeScript checks and production renderer/agent build passed.
 - Real local provider fixture: a background task wrote a real file, completed its independent project check, survived stream cancellation, and replayed without another model request or file write. This is a deterministic provider fixture, not a live model quality score.
 - Explicit cancellation resolved a parked approval without writing; broker UUIDs match.
@@ -14,7 +15,9 @@ This file records executed checks separately from planned or externally blocked 
 
 ## Build artifacts and limits
 
-Linux AppImage and packaged-desktop startup are tested locally when the packaging checks pass. See the corresponding CI job and checksum for the exact build. A cross-built Windows unpacked application was inspected for correct PE/x64 and native Windows assets; that does not establish Windows execution or installer validation.
+Linux AppImage and packaged-desktop startup passed locally using Electron44.9.3 and embedded Node24.22.0. See the corresponding CI job and checksum for the exact build. A cross-built Windows unpacked application was inspected for correct PE/x64 and native Windows assets; that does not establish Windows execution or installer validation.
+
+Local NSIS cross-building was blocked: the container cannot execute the required native32-bit loader (`Exec format error`), and Wine64 WoW64 did not support the uninstaller stage. Package signature/checksum verification stayed enabled.
 
 Native Windows CI builds the NSIS Setup and runs packaged desktop smoke. Review its actual result in GitHub Actions. A workflow definition alone is not a successful job. The onboarding network denied api.github.com, so CLI access to Actions metadata was unavailable; Git pushes and public repository pages worked.
 

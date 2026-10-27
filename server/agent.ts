@@ -1,6 +1,6 @@
 import { stepCountIs, streamText, type LanguageModel, type ToolSet } from 'ai'
 import type { ModelMessage } from '@ai-sdk/provider-utils'
-import { EventEncoder } from '@ag-ui/encoder'
+import { EventEncoder } from './events.ts'
 import { EventType, type BaseEvent } from '@ag-ui/core'
 import { APPROVAL_REQUIRED, TOOLS } from './tools.ts'
 import {
@@ -2497,6 +2497,8 @@ export async function runAgent(opts: RunOptions): Promise<void> {
     }
     /* and its measurement is closed, whichever way it ended */
     endTrace(runId, {
+      model: lastModel,
+      status: opts.abortSignal?.aborted ? 'cancelled' : runStatus,
       promptTokens: usageRef.current?.inputTokens ?? 0,
       completionTokens: usageRef.current?.outputTokens ?? 0,
       outcome: opts.abortSignal?.aborted ? 'aborted' : fatal || runStatus !== 'completed' ? 'error' : 'ok',

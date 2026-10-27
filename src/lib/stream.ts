@@ -51,7 +51,7 @@ async function request<T>(path: string, signal?: AbortSignal, body?: unknown): P
   })
   if (!response.ok) {
     const detail = await response.json().catch(() => null) as { error?: string } | null
-    throw new Error(detail?.error ?? `${response.status} ${response.statusText}`)
+    throw Object.assign(new Error(detail?.error ?? `${response.status} ${response.statusText}`), { status: response.status })
   }
   return response.json() as Promise<T>
 }
@@ -77,6 +77,7 @@ export function useSessionStreams(activeId: string | null): StreamsHandle {
   const controllers = useRef<Record<string, AbortController>>({})
   const generations = useRef<Record<string, number>>({})
   const inspected = useRef(new Set<string>())
+  const pendingStarts = useRef<Record<string, { signature: string; id: string }>>({})
   const alive = useRef(true)
   const patch = useCallback((id: string, update: Partial<SessionView>) => {
     if (!alive.current) return
@@ -171,16 +172,31 @@ export function useSessionStreams(activeId: string | null): StreamsHandle {
     try {
       // Save the user's turn before the background task can outlive this window.
       await api.saveBlocks(id, body.initialBlocks)
-      const { run: record } = await request<{ run: RecordView }>('/api/runs/start', undefined, {
-        requestId: crypto.randomUUID(), threadId: id, sessionId: body.sessionId, messages: body.messages,
+      const signature = JSON.stringify({ task: body.messages.at(-1)?.content, settings: body.settings })
+      const pending = pendingStarts.current[id]?.signature === signature ? pendingStarts.current[id] : { signature, id: crypto.randomUUID() }
+      pendingStarts.current[id] = pending
+      const payload = {
+        requestId: pending.id, threadId: id, sessionId: body.sessionId, messages: body.messages,
         history: toAgentHistory(body.initialBlocks), mode: body.settings.mode, trust: body.settings.trust,
         route: body.settings.route, config: { provider: body.settings.provider, model: body.settings.model },
         userName: body.settings.userName, capabilities: body.capabilities,
-      })
+      }
+      let accepted: { run: RecordView } | undefined
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try { accepted = await request<{ run: RecordView }>('/api/runs/start', undefined, payload); break }
+        catch (error) {
+          if ((error as { status?: number }).status || attempt === 2) throw error
+          await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)))
+        }
+      }
+      if (!accepted) throw new Error('Task acceptance was not confirmed. Retry to reconnect safely.')
+      const record = accepted.run
+      delete pendingStarts.current[id]
       inspected.current.add(id)
       return attach(id, record, body.initialBlocks, generation)
     } catch (error) {
-      patch(id, { running: false, phase: 'idle', error: (error as Error).message, outcome: 'failed' })
+      inspected.current.delete(id)
+      patch(id, { running: false, phase: 'idle', error: (error as Error).message, outcome: (error as { status?: number }).status ? 'failed' : null, connection: (error as { status?: number }).status ? 'connected' : 'offline' })
       return { completed: false, blocks: body.initialBlocks }
     }
   }, [attach, patch])

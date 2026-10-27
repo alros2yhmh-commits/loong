@@ -250,6 +250,12 @@ function foldEvent(blocks: Block[], e: AgentEvent): Block[] {
     case 'loong.settled': {
       const status = String(v.status ?? '')
       if (!status || status === 'running') return next
+      if (e.name === 'loong.settled') {
+        for (let i = 0; i < next.length; i++) {
+          const block = next[i]
+          if (block.k === 'tool' && block.live && (!block.runId || block.runId === e.runId)) next[i] = { ...block, live: false, ok: false, result: block.result ?? 'Interrupted: this call has no recorded result. Inspect its possible effects before retrying.' }
+        }
+      }
       const id = `outcome-${e.runId ?? 'run'}`
       const row: Block = { k: 'outcome', id, status, reason: typeof v.reason === 'string' ? v.reason : undefined,
         model: String(v.model ?? v.actualModel ?? '') || undefined, at }

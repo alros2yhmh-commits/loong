@@ -9,6 +9,8 @@
 - Task workspace adds Changes, Checks, Terminal, Artifacts, scoped conflict-aware undo, approval retries, and Arabic bidirectional layout support.
 - Batch edits, deletion snapshots, rewind conflicts, hook stdin handling, and command guards have regression coverage.
 - Headless evaluation preserves the Git index and reports truthful outcomes. Thirty internal fixtures include independent acceptance checks; fixture self-tests are not a live model benchmark.
+- Desktop provider credentials use OS-keychain-backed authenticated encryption where available, with explicit fallback status and preservation of locked stores.
+- Removed unused AG-UI client/protobuf dependencies and their vulnerable validator path; JSON SSE transport remains interoperable.
 - Desktop uses an authenticated private loopback port and exact trusted renderer origin. Electron is pinned to 44.9.3 with Node24, with native PTY and desktop smoke checks.
 - Windows NSIS and Linux AppImage CI, integrity checksums, and English/Arabic source-build documentation are included.
 

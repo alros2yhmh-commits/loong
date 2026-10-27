@@ -21,7 +21,7 @@ These controls reduce risk. Path validation and command regexes do **not** form 
 
 ## Keys and local data
 
-The current key store uses an owner-restricted local file; it is not encrypted at rest. Protect the data directory and backups. The desktop app normally stores agent data under `<Electron userData>/agent`; development defaults to `~/.loong`, or the explicitly configured `LOONG_DATA_DIR`.
+When the desktop OS keychain is available, Electron safeStorage wraps a per-installation key and the agent stores provider credentials using authenticated AES-256-GCM encryption. Legacy plaintext values migrate only after a successful atomic encrypted write. Keep the OS vault and encrypted store together in backups; a missing or wrong unlock key must not overwrite saved values. Headless development and fresh Linux sessions without a usable keychain explicitly report permission-restricted plaintext storage. An existing protected vault never silently downgrades. Settings reports the actual storage mode. Protect the data directory and backups. The desktop app normally stores agent data under `<Electron userData>/agent`; development defaults to `~/.loong`, or the explicitly configured `LOONG_DATA_DIR`.
 
 Provider privacy and retention depend on the selected provider and routing configuration. Do not assume all endpoints offer zero retention. Logs, journals, prompts, diffs, and evaluation artifacts can contain project content. Redact secrets before exporting or sharing them.
 

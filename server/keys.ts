@@ -1,106 +1,150 @@
-import { chmodSync, readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 import { join } from 'node:path'
 import { DATA_DIR } from './config.ts'
 
-/* ---------------------------------------------------------------------------
-   Provider API keys, kept by the agent.
-
-   The rule from the old handshake still holds: a key lives in this process and
-   nowhere else. The renderer may SET a key and may ask WHETHER one is set; it
-   may never read one back. So GET returns a masked shape — `sk-…4f2a` — which
-   is enough to recognise your own key and useless to anyone who steals it.
-
-   The file is written next to the sessions store, in the same data dir, and a
-   corrupt file is replaced rather than thrown.
-   --------------------------------------------------------------------------- */
-
+/* The desktop unwraps this key through Electron safeStorage. Remove the bridge
+   value before any workspace command inherits process.env. Headless development
+   can run without a key, with an explicitly reported plaintext storage mode. */
+const suppliedKey = process.env.LOONG_KEY_ENCRYPTION_KEY
+delete process.env.LOONG_KEY_ENCRYPTION_KEY
 const PATH = join(DATA_DIR, 'keys.json')
+const AAD = Buffer.from('Loong provider keys v1')
+let encryptionKey: Buffer | undefined
+let storageError: string | undefined
+if (suppliedKey) {
+  const decoded = Buffer.from(suppliedKey, 'base64')
+  if (decoded.length === 32 && decoded.toString('base64') === suppliedKey) encryptionKey = decoded
+  else storageError = 'The credential encryption key is invalid. Existing credentials were preserved.'
+}
 
 export const KEY_PROVIDERS = ['openrouter', 'anthropic', 'openai', 'google', 'custom'] as const
 export type KeyProvider = (typeof KEY_PROVIDERS)[number]
-
 let keys: Record<string, string> = {}
-/* a custom provider is a key AND an endpoint; the endpoint is not a secret, but
-   it lives with the key because they are set in the same breath */
 let baseUrls: Record<string, string> = {}
+let loaded = false
 
+interface Envelope { version: 1; encrypted: true; iv: string; tag: string; data: string }
+
+/** Metadata only: neither the encryption key nor provider values leave here. */
+export function keyStorageStatus(): { mode: 'encrypted' | 'plaintext' | 'unavailable'; error?: string } {
+  if (!loaded) loadKeys()
+  return storageError ? { mode: 'unavailable', error: storageError }
+    : { mode: encryptionKey ? 'encrypted' : 'plaintext' }
+}
+
+function payloadOf(parsed: unknown): { keys: Record<string, string>; baseUrls: Record<string, string> } {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Invalid credential data')
+  const data = parsed as Record<string, unknown>
+  const source = data.keys && typeof data.keys === 'object' ? data.keys as Record<string, unknown> : data
+  const next: Record<string, string> = {}, urls: Record<string, string> = {}
+  for (const provider of KEY_PROVIDERS) {
+    if (typeof source[provider] === 'string' && source[provider].trim()) next[provider] = source[provider].trim()
+  }
+  if (data.baseUrls && typeof data.baseUrls === 'object') {
+    for (const provider of KEY_PROVIDERS) {
+      const value = (data.baseUrls as Record<string, unknown>)[provider]
+      if (typeof value === 'string' && value.trim()) urls[provider] = value.trim()
+    }
+  }
+  return { keys: next, baseUrls: urls }
+}
+
+function encryptedPayload(parsed: Envelope): unknown {
+  if (!encryptionKey) throw new Error('Missing encryption key')
+  const iv = Buffer.from(parsed.iv, 'base64'), tag = Buffer.from(parsed.tag, 'base64')
+  if (parsed.version !== 1 || iv.length !== 12 || tag.length !== 16 || typeof parsed.data !== 'string') throw new Error('Invalid envelope')
+  const decipher = createDecipheriv('aes-256-gcm', encryptionKey, iv)
+  decipher.setAAD(AAD)
+  decipher.setAuthTag(tag)
+  return JSON.parse(Buffer.concat([decipher.update(Buffer.from(parsed.data, 'base64')), decipher.final()]).toString('utf8'))
+}
+
+/** Corrupt or locked stores remain untouched, and cannot be silently overwritten. */
 export function loadKeys(): void {
+  loaded = true
+  if (storageError) return
+  keys = {}; baseUrls = {}
   try {
     if (!existsSync(PATH)) return
-    const parsed = JSON.parse(readFileSync(PATH, 'utf8')) as unknown
-    if (parsed && typeof parsed === 'object') {
-      keys = {}
-      for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
-        if (typeof v === 'string' && v.trim()) keys[k] = v.trim()
-      }
-      const urls = (parsed as { baseUrls?: unknown }).baseUrls
-      if (urls && typeof urls === 'object') {
-        for (const [p, v] of Object.entries(urls as Record<string, unknown>)) {
-          if (typeof v === 'string' && v.trim()) baseUrls[p] = v.trim()
-        }
-      }
-    }
+    const content = readFileSync(PATH, 'utf8')
+    if (content.length > 1_000_000) throw new Error('Credential store is too large')
+    const parsed = JSON.parse(content) as Record<string, unknown>
+    const encrypted = parsed?.encrypted === true
+    const payload = payloadOf(encrypted ? encryptedPayload(parsed as unknown as Envelope) : parsed)
+    keys = payload.keys; baseUrls = payload.baseUrls
+    // Replace legacy plaintext only after authenticated encryption and an atomic write succeed.
+    if (!encrypted && encryptionKey) persist(keys, baseUrls)
   } catch {
-    keys = {}
+    keys = {}; baseUrls = {}
+    storageError = 'The credential store could not be unlocked or read. Existing credentials were preserved; restore the correct OS keyring or a backup before changing them.'
   }
 }
 
-function flush(): void {
+function persist(next: Record<string, string>, urls: Record<string, string>): void {
+  if (storageError) throw new Error(storageError)
+  const payload = JSON.stringify({ keys: next, baseUrls: urls })
+  let serialized: string
+  if (encryptionKey) {
+    const iv = randomBytes(12)
+    const cipher = createCipheriv('aes-256-gcm', encryptionKey, iv)
+    cipher.setAAD(AAD)
+    const data = Buffer.concat([cipher.update(payload, 'utf8'), cipher.final()])
+    const envelope: Envelope = { version: 1, encrypted: true, iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), data: data.toString('base64') }
+    serialized = JSON.stringify(envelope)
+  } else serialized = JSON.stringify({ ...next, baseUrls: urls })
+  mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 })
+  const temporary = `${PATH}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`
+  let descriptor: number | undefined
   try {
-    mkdirSync(DATA_DIR, { recursive: true })
-    /* 0600: owner read and write only. This is NOT encryption — an audit is
-       right to call that out — but it is the difference between a secret that
-       another local account can read and one it cannot, and it costs nothing. */
-    writeFileSync(PATH, JSON.stringify({ ...keys, baseUrls }), { encoding: 'utf8', mode: 0o600 })
-    try {
-      chmodSync(PATH, 0o600)
-    } catch {
-      /* Windows ignores POSIX modes; the ACL already limits it to the user */
-    }
+    descriptor = openSync(temporary, 'wx', 0o600)
+    writeFileSync(descriptor, serialized, 'utf8')
+    fsyncSync(descriptor)
+    closeSync(descriptor); descriptor = undefined
+    renameSync(temporary, PATH)
   } catch {
-    /* a read-only data dir must not take the agent down */
+    throw new Error('The provider credentials could not be saved. Existing credentials were preserved; check the data directory permissions.')
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor)
+    rmSync(temporary, { force: true })
   }
 }
 
-/** the key for a provider, for the agent's own use — never for the renderer */
-export function keyFor(provider: string): string | undefined {
-  return keys[provider]
+function ensureWritable(): void {
+  if (!loaded) loadKeys()
+  if (storageError) throw new Error(storageError)
 }
 
-/** the last four characters, so the reader can recognise their own key */
-function mask(k: string): string {
-  const tail = k.slice(-4)
-  const head = k.length > 8 ? k.slice(0, 3) : ''
-  return `${head ? `${head}…` : ''}${tail}`
+/** Provider values stay in the agent; the renderer receives status only. */
+export function keyFor(provider: string): string | undefined { if (!loaded) loadKeys(); return keys[provider] }
+function mask(value: string): string {
+  if (value.length <= 8) return '•'.repeat(value.length)
+  const head = value.length > 8 ? `${value.slice(0, 3)}…` : ''
+  return `${head}${value.slice(-4)}`
 }
-
-/** what the interface is allowed to know: which providers have a key, masked */
 export function keyStatus(): Record<string, { set: boolean; hint: string; baseUrl: string }> {
+  if (!loaded) loadKeys()
   const out: Record<string, { set: boolean; hint: string; baseUrl: string }> = {}
-  for (const p of KEY_PROVIDERS) {
-    const k = keys[p]
-    out[p] = { set: Boolean(k), hint: k ? mask(k) : '', baseUrl: baseUrls[p] ?? '' }
+  for (const provider of KEY_PROVIDERS) {
+    const key = keys[provider]
+    out[provider] = { set: Boolean(key), hint: key ? mask(key) : '', baseUrl: baseUrls[provider] ?? '' }
   }
   return out
 }
-
-/** the endpoint a custom provider should talk to */
-export function baseUrlFor(provider: string): string | undefined {
-  const url = baseUrls[provider]
-  return url && url.trim() ? url.trim() : undefined
-}
-
+export function baseUrlFor(provider: string): string | undefined { if (!loaded) loadKeys(); return baseUrls[provider]?.trim() || undefined }
 export function setBaseUrl(provider: string, value: string): void {
-  const trimmed = value.trim()
-  if (trimmed) baseUrls[provider] = trimmed
-  else delete baseUrls[provider]
-  flush()
+  ensureWritable()
+  const next = { ...baseUrls }, trimmed = value.trim()
+  if (trimmed) next[provider] = trimmed
+  else delete next[provider]
+  persist(keys, next)
+  baseUrls = next
 }
-
-/** set or clear one provider's key; an empty string clears it */
 export function setKey(provider: string, value: string): void {
-  const trimmed = value.trim()
-  if (trimmed) keys[provider] = trimmed
-  else delete keys[provider]
-  flush()
+  ensureWritable()
+  const next = { ...keys }, trimmed = value.trim()
+  if (trimmed) next[provider] = trimmed
+  else delete next[provider]
+  persist(next, baseUrls)
+  keys = next
 }

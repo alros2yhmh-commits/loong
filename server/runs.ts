@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { BaseEvent } from '@ag-ui/core'
 import type { HistoryTurn } from './engine/messages.ts'
@@ -78,11 +78,11 @@ export class RunStore {
     } catch { return null }
   }
 
-  list(threadId?: string): RunRecord[] {
+  list(threadId?: string, limit = 100): RunRecord[] {
     if (!existsSync(this.directory)) return []
     return readdirSync(this.directory).filter(safeId).map((id) => this.get(id))
       .filter((run): run is RunRecord => Boolean(run && (!threadId || run.threadId === threadId)))
-      .sort((a, b) => b.createdAt - a.createdAt).slice(0, 100)
+      .sort((a, b) => b.createdAt - a.createdAt).slice(0, limit)
   }
 
   append(id: string, event: BaseEvent): RunEvent {
@@ -147,7 +147,18 @@ export class RunStore {
     record.settled = true
     record.updatedAt = Date.now()
     this.save(record)
+    this.eventCache.delete(id)
     this.listeners.get(id)?.forEach((notify) => notify())
+  }
+
+  removeThread(threadId: string): void {
+    for (const run of this.list(threadId, Number.MAX_SAFE_INTEGER)) {
+      if (!run.settled) throw new Error('Stop the running task before deleting its history.')
+      rmSync(join(this.directory, run.id), { recursive: true, force: true })
+      this.records.delete(run.id)
+      this.eventCache.delete(run.id)
+      this.listeners.delete(run.id)
+    }
   }
 
   annotate(id: string, event: BaseEvent): void {

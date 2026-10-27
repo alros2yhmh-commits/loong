@@ -53,3 +53,14 @@ A check applies to a particular file state. After a later edit, rerun the releva
 ## Undo cannot restore a file
 
 Undo cannot safely overwrite a newer user edit. Review the reported conflict and recover manually from the journal or version control. Shell commands, deployments, pushed Git commits, and external effects are not fully reversible through a file journal. Keep normal project backups/version control.
+
+## Electron44 lazy installation and proxies
+
+Electron44 downloads its verified desktop runtime separately from `npm ci`. The build commands call `npm run install:desktop` explicitly before packaging. To repair a missing runtime, run that command directly. With a standard HTTP(S) corporate proxy on Node24, set `NODE_USE_ENV_PROXY=1` for the install process; retain TLS verification and use the organization's supported CA configuration when needed. Do not set remote-checksum overrides or disable TLS checks.
+
+PowerShell:
+
+```powershell
+$env:NODE_USE_ENV_PROXY = "1"
+npm run install:desktop
+```

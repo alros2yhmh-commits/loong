@@ -1,5 +1,5 @@
 /* The desktop process owns the authenticated sidecar and the trusted renderer. */
-const { app, BrowserWindow, Menu, dialog, ipcMain, shell, protocol } = require('electron')
+const { app, BrowserWindow, Menu, dialog, ipcMain, shell, protocol, safeStorage } = require('electron')
 const { spawn } = require('node:child_process')
 const crypto = require('node:crypto')
 const path = require('node:path')
@@ -40,16 +40,50 @@ function freePort() {
     })
   })
 }
+/* The encrypted provider file uses an installation key wrapped by the OS
+   keyring. A basic_text Linux backend is not treated as encryption. */
+function credentialEncryptionKey(dataDir) {
+  const file = path.join(dataDir, 'vault-key.bin')
+  let available = false
+  try {
+    available = safeStorage.isEncryptionAvailable() && !(process.platform === 'linux' &&
+      safeStorage.getSelectedStorageBackend?.() === 'basic_text')
+  } catch { /* a fresh headless environment may have no OS credential service */ }
+  if (!available) {
+    if (fs.existsSync(file)) throw new Error('The OS keyring is unavailable. Existing provider credentials were preserved; unlock the keyring and restart Loong.')
+    return undefined
+  }
+  if (fs.existsSync(file)) {
+    try {
+      const value = safeStorage.decryptString(fs.readFileSync(file))
+      const key = Buffer.from(value, 'base64')
+      if (key.length !== 32 || key.toString('base64') !== value) throw new Error('Invalid vault key')
+      return value
+    } catch { throw new Error('The provider vault could not be unlocked. Existing credentials were preserved; restore the correct OS account/keyring or a backup.') }
+  }
+  const value = crypto.randomBytes(32).toString('base64')
+  const temporary = `${file}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`
+  try {
+    fs.writeFileSync(temporary, safeStorage.encryptString(value), { flag: 'wx', mode: 0o600 })
+    fs.renameSync(temporary, file)
+    return value
+  } catch { throw new Error('The OS-backed credential vault could not be created. Check the application data directory permissions.') }
+  finally { fs.rmSync(temporary, { force: true }) }
+}
+
 async function startAgent() {
   const bundle = agentPath()
   if (!bundle) throw new Error('Agent bundle missing. Run npm run build before starting Loong.')
   agentPort = await freePort()
   const dataDir = process.env.LOONG_DATA_DIR || path.join(app.getPath('userData'), 'agent')
-  fs.mkdirSync(dataDir, { recursive: true })
+  fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 })
+  const providedKey = process.env.LOONG_KEY_ENCRYPTION_KEY
+  delete process.env.LOONG_KEY_ENCRYPTION_KEY
+  const encryptionKey = providedKey || credentialEncryptionKey(dataDir)
   agentLog = fs.openSync(path.join(dataDir, 'agent-startup.log'), 'a', 0o600)
   agent = spawn(process.execPath, [bundle], {
     cwd: path.dirname(bundle),
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', LOONG_PORT: String(agentPort),
+    env: { ...process.env, ...(encryptionKey ? { LOONG_KEY_ENCRYPTION_KEY: encryptionKey } : {}), ELECTRON_RUN_AS_NODE: '1', LOONG_PORT: String(agentPort),
       LOONG_HOST: '127.0.0.1', LOONG_TOKEN: SESSION_TOKEN, LOONG_DATA_DIR: dataDir,
       LOONG_VERSION: app.getVersion(), NO_PROXY: '127.0.0.1,localhost' },
     stdio: ['ignore', agentLog, agentLog], windowsHide: true,

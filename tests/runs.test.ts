@@ -50,3 +50,19 @@ test('a restarted process blocks unknown side effects instead of silently replay
     assert.equal(readFileSync(join(directory, run.id, 'run.json'), 'utf8').includes('apiKey'), false)
   } finally { rmSync(directory, { recursive: true, force: true }) }
 })
+
+test('deleting task history refuses active work and removes settled protocol checkpoints', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'loong-delete-history-'))
+  try {
+    const store = new RunStore(directory)
+    const run = store.create(input)
+    store.checkpoint(run.id, [{ role: 'user', content: 'Private project context' }])
+    assert.throws(() => store.removeThread(input.threadId), /Stop the running task/)
+    assert.ok(store.history(run.id))
+    store.settle(run.id, 'cancelled')
+    store.removeThread(input.threadId)
+    assert.equal(store.get(run.id), null)
+    assert.equal(store.history(run.id), null)
+    assert.deepEqual(store.events(run.id), [])
+  } finally { rmSync(directory, { recursive: true, force: true }) }
+})

@@ -54,6 +54,7 @@ export function SettingsPanel({
   void health
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [keys, setKeys] = useState<Record<string, { set: boolean; hint: string; baseUrl: string }>>({})
+  const [storage, setStorage] = useState<{ mode: string; error?: string } | null>(null)
   const [draft, setDraft] = useState<Record<string, string>>({})
   /* the endpoint is written as you type, not on blur: closing the panel with the
      caret still in the field used to discard it */
@@ -65,7 +66,7 @@ export function SettingsPanel({
   useEffect(() => {
     if (!open) return
     void api.providers().then((r) => setProviders(r.providers ?? [])).catch(() => {})
-    void api.keys().then((r) => setKeys(r.keys ?? {})).catch(() => {})
+    void api.keys().then((r) => { setKeys(r.keys ?? {}); setStorage(r.storage ?? null) }).catch(() => {})
   }, [open, settings.provider])
 
   /* Escape is the way out of every surface in this app; the panel was the one
@@ -80,6 +81,7 @@ export function SettingsPanel({
     try {
       const r = await api.putKeys({ keys: { [id]: value } })
       setKeys(r.keys)
+      setStorage(r.storage ?? null)
       setDraft((d) => ({ ...d, [id]: '' }))
       setSaved({ id, ok: true, text: 'saved — the agent can use it now' })
     } catch (err) {
@@ -94,6 +96,7 @@ export function SettingsPanel({
     try {
       const r = await api.putKeys({ baseUrls: { [id]: url } })
       setKeys(r.keys)
+      setStorage(r.storage ?? null)
       setSaved({ id: `${id}-url`, ok: true, text: 'endpoint saved' })
     } catch (err) {
       setSaved({ id: `${id}-url`, ok: false, text: `not saved — ${(err as Error).message}` })
@@ -225,10 +228,13 @@ export function SettingsPanel({
                   <>
                     <h3 className="display m-0 t-h3">API keys</h3>
                     <p className="mt-[5px] mb-[18px] t-small leading-[1.65]" style={{ color: 'var(--text-3)' }}>
-                      A key is handed to the agent process and never comes back. This window can set
-                      one and can tell you whether one is set — it cannot read it. That is the whole
-                      point: an interface that can read your key is an interface that can leak it.
+                      Provider keys are held by the local agent. Saved values are returned only as masked status.
                     </p>
+                    {storage && <p className="t-small mb-[14px]" role={storage.mode === 'unavailable' ? 'alert' : 'status'} style={{ color: storage.mode === 'encrypted' ? 'var(--text-3)' : 'var(--amber)' }}>
+                      {storage.mode === 'encrypted' ? "Stored with this device's keychain-backed encryption."
+                        : storage.mode === 'unavailable' ? storage.error ?? 'Credential storage is locked. Existing values were preserved.'
+                        : 'Local credential storage is not encrypted on this device. Enable an OS keychain for desktop encryption.'}
+                    </p>}
                     <Row label="Provider" hint="Where the model runs. The key below belongs to it.">
                       <div className="flex flex-wrap gap-[5px]">
                         {providers.map((pr) => (
@@ -306,7 +312,7 @@ export function SettingsPanel({
                                 style={{ border: '1px solid var(--line-2)', color: 'var(--text-3)' }}
                                 onClick={() => {
                                   setDraft((d) => ({ ...d, [k.id]: '' }))
-                                  void api.putKeys({ [k.id]: '' }).then((r) => setKeys(r.keys)).catch(() => {})
+                                  void api.putKeys({ keys: { [k.id]: '' } }).then((r) => setKeys(r.keys)).catch(() => {})
                                 }}
                               >
                                 Clear

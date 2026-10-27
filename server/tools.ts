@@ -506,7 +506,7 @@ export const shellTool = tool({
     command: z.string().describe('The command to run, e.g. "npm test" or "git status".'),
     cwd: z.string().optional().describe('Directory to run in, relative to the workspace root.'),
   }),
-  execute: async ({ command, cwd }) => {
+  execute: async ({ command, cwd }, context) => {
     const dir = resolveInside(cwd ?? '.')
     const verdict = screenCommand(command, dir)
     if (!verdict.ok) return `Refused: ${verdict.reason}`
@@ -517,6 +517,7 @@ export const shellTool = tool({
         maxBuffer: 8 * 1024 * 1024,
         windowsHide: true,
         shell: process.platform === 'win32' ? 'cmd.exe' : '/bin/sh',
+        signal: context?.abortSignal,
       })
       const out = [stdout, stderr].filter(Boolean).join('\n').trim()
       /* where it actually ran, echoed back — a model that assumes the cwd

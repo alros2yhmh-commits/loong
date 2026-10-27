@@ -1039,7 +1039,7 @@ export default function App() {
                       setOpenTabs((prev) => prev.filter((x) => x !== id))
                       if (activeId === id) setActiveId(null)
                       reload()
-                    })
+                    }).catch((error) => setNotice((error as Error).message))
                   }}
                 >
                   Delete

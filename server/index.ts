@@ -12,7 +12,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { isAbsolute, join, relative } from 'node:path'
 import type { BaseEvent } from '@ag-ui/core'
-import { EventEncoder } from '@ag-ui/encoder'
+import { EventEncoder } from './events.ts'
 import {
   getWorkspace,
   haveWorkspace,
@@ -62,7 +62,7 @@ import type { ProviderId } from './providers.ts'
 import { pendingApprovals, resolveApproval, pendingQuestions, resolveQuestion } from './approvals.ts'
 import { getSettings, putSettings, getFolderPrefs, putFolderPrefs } from './settings.ts'
 import { pendingHooks, trustHooks, untrustHooks } from './hooks.ts'
-import { KEY_PROVIDERS, keyStatus, setBaseUrl, setKey } from './keys.ts'
+import { KEY_PROVIDERS, keyStatus, keyStorageStatus, setBaseUrl, setKey } from './keys.ts'
 import { indexWorkspace, mapReport, statsOf } from './graph.ts'
 import { counts as findingCounts, listFindings, recordFindings, updateFinding } from './findings.ts'
 import { scanWorkspace } from './security-gate.ts'
@@ -306,7 +306,7 @@ app.put('/api/settings', async (c) => {
    The renderer may set a key and may ask whether one is set. It may never
    read one back: GET returns a masked hint, which is enough to recognise
    your own key and useless to anyone who steals it. */
-app.get('/api/keys', (c) => c.json({ keys: keyStatus() }))
+app.get('/api/keys', (c) => c.json({ keys: keyStatus(), storage: keyStorageStatus() }))
 
 app.put('/api/keys', async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as {
@@ -321,7 +321,7 @@ app.put('/api/keys', async (c) => {
   for (const p of KEY_PROVIDERS) {
     if (typeof urls[p] === 'string') setBaseUrl(p, urls[p] as string)
   }
-  return c.json({ keys: keyStatus() })
+  return c.json({ keys: keyStatus(), storage: keyStorageStatus() })
 })
 
 /* ---- tools (G3) ---------------------------------------------------------
@@ -456,6 +456,9 @@ app.post('/api/sessions', async (c) => {
 })
 
 app.delete('/api/sessions/:id', (c) => {
+  const id = c.req.param('id')
+  if (runStore.list(id).some((run) => !run.settled)) return c.json({ error: 'Stop the running task before deleting its history.' }, 409)
+  runStore.removeThread(id)
   deleteSession(c.req.param('id'))
   deleteBlocks(c.req.param('id'))
   return c.json({ ok: true })
@@ -964,6 +967,17 @@ interface RunBody {
 }
 
 const activeRuns = new Map<string, AbortController>()
+
+export async function stopActiveRuns(): Promise<void> {
+  await Promise.all([...activeRuns].map(async ([id, controller]) => {
+    controller.abort()
+    cancelRunApprovals(id)
+    cancelRunQuestions(id)
+    await Promise.all([killShell(id), stopProject(id)])
+  }))
+  const deadline = Date.now() + 1500
+  while (activeRuns.size && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20))
+}
 
 async function beginRun(body: RunBody): Promise<{ run: RunRecord } | { error: string; status: 400 | 409 }> {
   const mode: AgentMode = body.mode === 'plan' || body.mode === 'ask' ? body.mode : 'agent'

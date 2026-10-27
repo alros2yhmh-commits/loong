@@ -8,6 +8,10 @@ A local desktop coding agent for working on real projects: inspect files, make c
 
 Loong keeps the selected project, model, permissions, changed files, and checks visible. It supports OpenRouter, Ollama, Anthropic, OpenAI, Google, and compatible endpoints. Model capability and availability affect what a task can achieve; a free endpoint is a supported option, not a guarantee of flagship-model performance or uninterrupted capacity.
 
+![Loong task workspace](docs/assets/workspace.png)
+
+*Interface acceptance-test fixture showing task status and check evidence; not a live model benchmark.*
+
 ## Start with the desktop app
 
 If a release asset is available, download `Loong-<version>-Setup-x64.exe` from [GitHub Releases](https://github.com/alros2yhmh-commits/loong/releases), compare its SHA-256 against `SHA256SUMS.txt`, and run the installer. Windows x64 is the installer target. The installer does not require a system Node installation. Unsigned beta builds can trigger Windows SmartScreen; published checksums establish download integrity, not publisher identity.
@@ -81,6 +85,7 @@ Do not run a second desktop instance to serve the same data store. The packaged 
 | Command | Purpose |
 | --- | --- |
 | `npm test` | Existing suites and regression tests; no live model key required |
+| `npm run install:desktop` | Download/verify the pinned Electron runtime when needed |
 | `npm run build` | Frontend/server type checks, renderer build, sidecar bundle |
 | `npm run smoke:bundle` | Built API authentication/origin and native PTY smoke check |
 | `npm run smoke:runtime` | Check built API/native PTY and restricted CodeAct under Electron's Node |
@@ -95,7 +100,7 @@ Do not run a second desktop instance to serve the same data store. The packaged 
 
 Loong can read and modify a chosen project and execute approved commands with your OS account's permissions. Its workspace checks, command guards, renderer isolation, and approval controls are defense layers. They are **not a complete operating-system sandbox**. Use an isolated development account, VM, or container for untrusted repositories. Full trust does not make repository instructions or tool output trustworthy.
 
-Provider keys are held by the agent and are not returned by the settings API. The current local key file is permission-restricted, **not encrypted at rest**; protect the application data directory and backups. Files sent to a model are governed by that provider's terms and routing settings. [Security model](SECURITY.md).
+Provider keys are held by the agent and are not returned by the settings API. Desktop credentials use OS-keychain-backed encryption when available. Headless/keychain-unavailable fallback reports its plaintext storage mode explicitly; protect the application data directory and backups. Files sent to a model are governed by that provider's terms and routing settings. [Security model](SECURITY.md).
 
 ## Documentation
 

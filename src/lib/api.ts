@@ -111,6 +111,8 @@ export interface ModelCatalogResponse {
   fetchedAt?: number
 }
 
+export interface CredentialStorage { mode: 'encrypted' | 'plaintext' | 'unavailable'; error?: string }
+
 export interface ProviderInfo {
   id: string
   label: string
@@ -313,9 +315,9 @@ export const api = {
   openrouterModels: () => json<ModelCatalogResponse>('/api/openrouter/models'),
 
   /* keys — the interface may set one and ask whether one is set, never read one */
-  keys: () => json<{ keys: Record<string, { set: boolean; hint: string; baseUrl: string }> }>('/api/keys'),
+  keys: () => json<{ keys: Record<string, { set: boolean; hint: string; baseUrl: string }>; storage?: CredentialStorage }>('/api/keys'),
   putKeys: (body: { keys?: Record<string, string>; baseUrls?: Record<string, string> }) =>
-    json<{ keys: Record<string, { set: boolean; hint: string; baseUrl: string }> }>('/api/keys', {
+    json<{ keys: Record<string, { set: boolean; hint: string; baseUrl: string }>; storage?: CredentialStorage }>('/api/keys', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),

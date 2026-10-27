@@ -276,7 +276,7 @@ export async function runKernelPass(opts: KernelPassOptions): Promise<KernelPass
     string,
     {
       inputSchema?: unknown
-      execute?: (input: unknown, context: { toolCallId: string }) => unknown
+      execute?: (input: unknown, context: { toolCallId: string; abortSignal?: AbortSignal }) => unknown
     }
   >
 
@@ -330,7 +330,7 @@ export async function runKernelPass(opts: KernelPassOptions): Promise<KernelPass
       /* a schema that cannot validate is not a reason to refuse the call */
     }
     try {
-      const raw = await target.execute(input, { toolCallId: call.toolCallId })
+      const raw = await target.execute(input, { toolCallId: call.toolCallId, abortSignal: opts.abortSignal })
       const image = imageOutput(raw)
       if (image) {
         images.set(call.toolCallId, image.shotBase64)

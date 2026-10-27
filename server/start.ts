@@ -1,5 +1,5 @@
 import { serve } from '@hono/node-server'
-import { app } from './index.ts'
+import { app, stopActiveRuns } from './index.ts'
 import { HOST, PORT, getWorkspace } from './config.ts'
 import { loadRuntimeKeys } from './providers.ts'
 import { loadKeys } from './keys.ts'
@@ -30,10 +30,14 @@ if (process.argv[2] === 'run') {
     console.log(`[loong] workspace      ${getWorkspace()}`)
   })
 
+  let closing = false
   const shutdown = () => {
-    void stopAllServers()
-    server.close(() => process.exit(0))
-    setTimeout(() => process.exit(0), 1500).unref()
+    if (closing) return
+    closing = true
+    const deadline = setTimeout(() => process.exit(0), 3000).unref()
+    void Promise.all([stopActiveRuns(), stopAllServers()]).finally(() => {
+      server.close(() => { clearTimeout(deadline); process.exit(0) })
+    })
   }
   process.on('SIGINT', shutdown)
   process.on('SIGTERM', shutdown)

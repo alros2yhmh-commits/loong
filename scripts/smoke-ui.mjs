@@ -172,6 +172,7 @@ try {
   assert.ok(streamRequests >= 2, 'The UI must reconnect after an interrupted stream')
   assert.equal(await page.locator('main [data-tool-call-id="write-1"]').count(), 1, 'Replayed tool events must not create duplicate rows')
   assert.deepEqual(pageErrors, [], 'Renderer must not throw')
+  if (process.env.LOONG_UI_SCREENSHOT) await page.screenshot({ path: process.env.LOONG_UI_SCREENSHOT, fullPage: true })
   console.log(JSON.stringify({ passed: ['provider catalog', 'fixed model selection', 'Arabic direction', 'approval failure and retry', 'partial outcome', 'outdated checks', 'file preview', 'keyboard tabs', 'confirmed scoped undo with conflict reporting', 'reconnect and replay without duplicate tools'], aiRequests: 0, approvalAttempts, rewindRequests, startRequests, streamRequests, pageErrors: 0 }))
 } finally {
   await browser?.close()

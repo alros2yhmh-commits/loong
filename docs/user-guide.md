@@ -44,6 +44,6 @@ Do not publish generated changes until you have reviewed the diff and the releva
 
 ## Data and privacy
 
-The app stores local sessions, settings, traces, journals, and keys under its data directory. Provider keys are not currently encrypted at rest. Loong sends the selected context to your chosen model/provider, and external tools may contact their own endpoints. Review provider privacy and retention policies for confidential repositories. Do not include keys in screenshots, issue reports, prompts, or commits.
+The app stores local sessions, settings, traces, journals, and keys under its data directory. Desktop provider keys are encrypted with an OS-keychain-wrapped installation key when a usable keychain is available. Headless/keychain-unavailable fallback is explicitly labeled; a locked protected store is preserved. Loong sends the selected context to your chosen model/provider, and external tools may contact their own endpoints. Review provider privacy and retention policies for confidential repositories. Do not include keys in screenshots, issue reports, prompts, or commits.
 
 See [security boundaries](../SECURITY.md) and [troubleshooting](troubleshooting.md).
