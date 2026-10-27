@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { MockLanguageModelV4, simulateReadableStream } from 'ai/test'
 import { EventType, type BaseEvent } from '@ag-ui/core'
 import { runAgent } from '../server/agent.ts'
-import { currentRunId, runWithRunId } from '../server/run-context.ts'
+import { currentRunId, currentSessionId, runWithRunId, sessionWithId } from '../server/run-context.ts'
 
 /* ---------------------------------------------------------------------------
    Two runs at once.
@@ -45,12 +45,15 @@ function slowModel(text: string, chunkDelayInMs: number): MockLanguageModelV4 {
 function recorder() {
   const events: BaseEvent[] = []
   const contexts: (string | null)[] = []
+  const sessions: (string | null)[] = []
   return {
     events,
     contexts,
+    sessions,
     emit: (e: BaseEvent) => {
       events.push(e)
       contexts.push(currentRunId())
+      sessions.push(currentSessionId())
     },
     types: () => events.map((e) => e.type),
     text: () =>
@@ -67,6 +70,7 @@ test('two runs keep separate contexts and abort independently', async () => {
   const controllerA = new AbortController()
 
   const runA = runWithRunId('run-a', () =>
+    sessionWithId('session-a', () =>
     runAgent({
       runId: 'run-a',
       threadId: 'thread-a',
@@ -78,9 +82,11 @@ test('two runs keep separate contexts and abort independently', async () => {
       emit: a.emit,
       abortSignal: controllerA.signal,
     }),
+    ),
   )
 
   const runB = runWithRunId('run-b', () =>
+    sessionWithId('session-b', () =>
     runAgent({
       runId: 'run-b',
       threadId: 'thread-b',
@@ -91,6 +97,7 @@ test('two runs keep separate contexts and abort independently', async () => {
       model: slowModel('BBBBBBBBBB', 5),
       emit: b.emit,
     }),
+    ),
   )
 
   /* stop A while B is still streaming */
@@ -109,4 +116,9 @@ test('two runs keep separate contexts and abort independently', async () => {
   assert.ok(b.contexts.length > 0)
   assert.deepEqual([...new Set(a.contexts)], ['run-a'])
   assert.deepEqual([...new Set(b.contexts)], ['run-b'])
+
+  /* and the session rides the same context: the bus and the digest must never
+     attribute one conversation's messages to the other */
+  assert.deepEqual([...new Set(a.sessions)], ['session-a'])
+  assert.deepEqual([...new Set(b.sessions)], ['session-b'])
 })

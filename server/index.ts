@@ -9,20 +9,33 @@ import { promisify } from 'node:util'
 import { isAbsolute, join, relative } from 'node:path'
 import type { BaseEvent } from '@ag-ui/core'
 import { EventEncoder } from '@ag-ui/encoder'
-import { getWorkspace, setWorkspace, setCapabilities, type Capabilities } from './config.ts'
+import {
+  getWorkspace,
+  haveWorkspace,
+  setWorkspace,
+  withRunWorkspace,
+  setCapabilities,
+  type Capabilities,
+} from './config.ts'
 import { shotsDir } from './browser.ts'
 import { listCheckpoints, rewindLastRun, rewindRun } from './journal.ts'
 import { listTraces, traceFor, traceStats } from './trace.ts'
-import { runWithRunId } from './run-context.ts'
+import { runWithRunId, sessionWithId } from './run-context.ts'
 import { forget, listMemory } from './memory.ts'
+import { forgetProfileFact, readProfile, setProfileName } from './profile.ts'
+import { listDigests } from './digest.ts'
+import { peersFor, formatPeers, readInbox, unreadCount } from './bus.ts'
+import { listServers, stopServer } from './servers.ts'
 import {
   assertSafeMcpConfig,
   disconnectAll,
   loadMcpConfig,
+  maskMcpConfig,
   mcpStatus,
   removeMcpServer,
   saveMcpConfig,
   testMcpServer,
+  unmaskMcpConfig,
   type McpServerSpec,
 } from './mcp.ts'
 import { runAgent, type ChatMessage, type AgentMode, type HistoryTurn } from './agent.ts'
@@ -44,7 +57,11 @@ import { ackTimer, addTimer, cancelTimer, fireDue, listTimers, parseDelay, pendi
 import type { ProviderId } from './providers.ts'
 import { pendingApprovals, resolveApproval, pendingQuestions, resolveQuestion } from './approvals.ts'
 import { getSettings, putSettings, getFolderPrefs, putFolderPrefs } from './settings.ts'
+import { pendingHooks, trustHooks, untrustHooks } from './hooks.ts'
 import { KEY_PROVIDERS, keyStatus, setBaseUrl, setKey } from './keys.ts'
+import { indexWorkspace, mapReport, statsOf } from './graph.ts'
+import { counts as findingCounts, listFindings, recordFindings, updateFinding } from './findings.ts'
+import { scanWorkspace } from './security-gate.ts'
 
 /* ---------------------------------------------------------------------------
    The local agent server.
@@ -127,7 +144,10 @@ export function isLoopbackPeer(address: string): boolean {
 app.use('*', async (c, next) => {
   const peer = peerAddress(c)
   if (SESSION_TOKEN) {
-    if (c.req.header('x-loong-token') !== SESSION_TOKEN) {
+    /* screenshots are <img src> — they cannot send a header. Loopback + a
+       generated filename is the whole allowance; anything else still needs the token. */
+    const shot = c.req.path.startsWith('/api/shots/') && isLoopbackPeer(peer || '127.0.0.1')
+    if (!shot && c.req.header('x-loong-token') !== SESSION_TOKEN) {
       return c.json({ error: 'This local agent requires its session token.' }, 401)
     }
   } else if (peer && !isLoopbackPeer(peer)) {
@@ -187,7 +207,7 @@ app.get('/api/health', async (c) => {
   const ollama = await probeOllama()
   return c.json({
     ok: true,
-    workspace: getWorkspace(),
+    workspace: haveWorkspace() ? getWorkspace() : null,
     ollama,
     pendingApprovals: pendingApprovals().length,
     pendingQuestions: pendingQuestions().length,
@@ -197,7 +217,9 @@ app.get('/api/health', async (c) => {
 /* ---- workspace --------------------------------------------------------- */
 
 app.get('/api/workspace', (c) => {
-  return c.json({ workspace: getWorkspace() })
+  /* null means "nothing is open yet" — the interface shows the picker instead
+     of pretending the process's own folder is the project */
+  return c.json({ workspace: haveWorkspace() ? getWorkspace() : null })
 })
 
 /* The tools the agent can reach, published so the interface does not hardcode
@@ -223,6 +245,19 @@ const TOOL_MANIFEST = [
   { name: 'plan', access: 'plan', summary: 'Propose a plan without editing anything' },
   { name: 'audit', access: 'plan', summary: 'Audit the work against the request' },
   { name: 'browser', access: 'write', summary: 'Drive a browser to verify a change' },
+  { name: 'task', access: 'read', summary: 'Delegate one read-only research job to a child agent' },
+  { name: 'task_many', access: 'read', summary: 'Fan out up to 30 read-only child agents in one call' },
+  { name: 'agent_peers', access: 'read', summary: 'List the other sessions running on this machine' },
+  { name: 'agent_inbox', access: 'read', summary: 'Read messages other sessions sent to this one' },
+  { name: 'agent_message', access: 'write', summary: 'Message another session, or reply to it' },
+  { name: 'remember_user', access: 'write', summary: 'Keep a durable fact about the user' },
+  { name: 'user_profile', access: 'read', summary: 'Show, name or forget what is known about the user' },
+  { name: 'recent_work', access: 'read', summary: 'What earlier sessions on this machine concluded' },
+  { name: 'desktop', access: 'write', summary: 'Open apps, focus windows, click, type, screenshot — asks first' },
+  { name: 'server_start', access: 'write', summary: 'Start a long-lived dev server with a readable log' },
+  { name: 'server_logs', access: 'read', summary: 'Read the tail of a managed dev server log' },
+  { name: 'server_stop', access: 'write', summary: 'Stop a managed dev server and its child processes' },
+  { name: 'server_list', access: 'read', summary: 'List the dev servers Loong is managing' },
 ]
 
 /* ---- live runs ------------------------------------------------------------
@@ -282,6 +317,43 @@ app.put('/api/keys', async (c) => {
    a list that will drift. */
 
 app.get('/api/tools', (c) => c.json({ tools: TOOL_MANIFEST }))
+
+/* ---- graph (G6) ---------------------------------------------------------
+   The repository as a graph. The interface can show what the agent indexed
+   without spending a run on it, and `?refresh=1` is the one manual rebuild. */
+
+app.get('/api/graph', async (c) => {
+  if (!haveWorkspace()) return c.json({ error: 'No folder is open.' }, 400)
+  const graph = await indexWorkspace(c.req.query('refresh') === '1' ? { force: true } : {})
+  return c.json({ stats: statsOf(graph), map: mapReport(graph) })
+})
+
+/* ---- findings (G7) ------------------------------------------------------
+   The security ledger, so the board survives a reload and a finding can be
+   closed from the interface without asking the model to do it. */
+
+app.get('/api/findings', (c) => c.json({ findings: listFindings(), counts: findingCounts() }))
+
+app.post('/api/findings/:id', async (c) => {
+  const body = await c.req.json().catch(() => ({}))
+  const status =
+    body.status === 'fixed' || body.status === 'accepted' || body.status === 'open' ? body.status : null
+  if (!status) return c.json({ error: 'status must be open, fixed or accepted' }, 400)
+  const hit = updateFinding(
+    c.req.param('id'),
+    status,
+    typeof body.note === 'string' ? body.note : undefined,
+  )
+  if (!hit) return c.json({ error: 'no such finding' }, 404)
+  return c.json({ finding: hit, counts: findingCounts() })
+})
+
+app.post('/api/security/scan', async (c) => {
+  if (!haveWorkspace()) return c.json({ error: 'No folder is open.' }, 400)
+  const findings = await scanWorkspace({ maxFiles: 300 })
+  const recorded = recordFindings(findings)
+  return c.json({ findings: findings.slice(0, 80), counts: recorded })
+})
 
 /* ---- session state (G5) ------------------------------------------------
    What a restored session is doing, so a reload is not a blank screen. */
@@ -668,6 +740,31 @@ async function gitRead(args: string[]): Promise<string> {
   return stdout
 }
 
+export function filesFromNumstat(text: string): { path: string; added: number; removed: number }[] {
+  return text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const parts = line.split('\t')
+      const added = parts[0] === '-' ? 0 : Number(parts[0]) || 0
+      const removed = parts[1] === '-' ? 0 : Number(parts[1]) || 0
+      const path = parts.slice(2).join('\t')
+      return { path, added, removed }
+    })
+    .filter((f) => f.path)
+}
+
+async function countLines(rel: string): Promise<number> {
+  try {
+    const text = readFileSync(join(getWorkspace(), rel), 'utf8')
+    if (text.includes('\u0000')) return 0
+    return text.split('\n').length
+  } catch {
+    return 0
+  }
+}
+
 app.get('/api/git/status', async (c) => {
   try {
     return c.json({ ok: true, status: await gitRead(['status', '--porcelain=v1', '-b']) })
@@ -678,9 +775,20 @@ app.get('/api/git/status', async (c) => {
 
 app.get('/api/git/diff', async (c) => {
   try {
-    const stat = await gitRead(['diff', '--stat'])
-    const diff = await gitRead(['diff'])
-    return c.json({ ok: true, stat, diff: diff.slice(0, 200_000) })
+    /* vs HEAD so staged + unstaged show, without `git add -N` mutating the index. */
+    const stat = await gitRead(['diff', 'HEAD', '--stat']).catch(() => gitRead(['diff', '--stat']))
+    const diff = await gitRead(['diff', 'HEAD']).catch(() => gitRead(['diff']))
+    const numstat = await gitRead(['diff', 'HEAD', '--numstat']).catch(() =>
+      gitRead(['diff', '--numstat']),
+    )
+    const files = filesFromNumstat(numstat)
+    const seen = new Set(files.map((f) => f.path))
+    const others = await gitRead(['ls-files', '--others', '--exclude-standard']).catch(() => '')
+    for (const path of others.split('\n').map((l) => l.trim()).filter(Boolean)) {
+      if (seen.has(path)) continue
+      files.push({ path, added: await countLines(path), removed: 0 })
+    }
+    return c.json({ ok: true, stat, diff: diff.slice(0, 200_000), files })
   } catch (err) {
     return c.json({ ok: false, error: (err as Error).message }, 200)
   }
@@ -704,17 +812,68 @@ app.delete('/api/memory/:id', (c) =>
     : c.json({ error: 'No memory entry with that id.' }, 404),
 )
 
+/* ---- the person, and what earlier sessions concluded --------------------
+   Both stores are the agent's, but showing them is the user's right: what the
+   app believes about them is not a secret it keeps from them. */
+
+app.get('/api/profile', (c) => c.json(readProfile()))
+
+app.post('/api/profile', async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { name?: unknown; forget?: unknown }
+  if (typeof body.name === 'string') setProfileName(body.name)
+  if (typeof body.forget === 'string' && body.forget.trim()) {
+    if (!forgetProfileFact(body.forget.trim())) {
+      return c.json({ error: 'No profile fact with that id.' }, 404)
+    }
+  }
+  return c.json(readProfile())
+})
+
+app.get('/api/digests', (c) => {
+  const asked = Number(c.req.query('limit'))
+  const limit = Number.isFinite(asked) && asked > 0 ? Math.min(150, Math.floor(asked)) : 50
+  return c.json({ digests: listDigests(limit) })
+})
+
+/* ---- the other sessions, as peers ---------------------------------------
+   The bus is durable, but this is the read side the interface can poll: who is
+   running beside this conversation, and what did they say that is still unread. */
+
+app.get('/api/agents', (c) => {
+  const sessionId = c.req.query('session')?.trim()
+  if (!sessionId) return c.json({ error: 'session is required' }, 400)
+  return c.json({
+    peers: peersFor(sessionId),
+    peersText: formatPeers(sessionId),
+    unread: unreadCount(sessionId),
+    inbox: readInbox(sessionId, { mark: c.req.query('mark') === '1', limit: 20 }),
+  })
+})
+
+/* ---- managed dev servers ------------------------------------------------
+   The interface can show what is still holding a port, and stop it without
+   spending a model turn on it. */
+
+app.get('/api/servers', (c) => c.json({ servers: listServers() }))
+
+app.post('/api/servers/:id/stop', async (c) => {
+  const result = await stopServer(c.req.param('id'))
+  return c.json(result, result.ok ? 200 : 404)
+})
+
 /* ---- MCP: the servers the user connected -------------------------------- */
 
 app.get('/api/mcp', async (c) => c.json({ servers: await mcpStatus() }))
 
-app.get('/api/mcp/config', (c) => c.json(loadMcpConfig()))
+app.get('/api/mcp/config', (c) => c.json(maskMcpConfig(loadMcpConfig())))
 
 app.put('/api/mcp', async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as {
     mcpServers?: Record<string, McpServerSpec>
   }
-  const next = { mcpServers: body.mcpServers ?? {} }
+  /* unmask before validating: the checks have to see the values that will
+     actually be spawned with, not the placeholders the UI echoed back */
+  const next = unmaskMcpConfig({ mcpServers: body.mcpServers ?? {} }, loadMcpConfig())
   try {
     assertSafeMcpConfig(next)
   } catch (err) {
@@ -739,6 +898,31 @@ app.delete('/api/mcp/:name', (c) =>
     : c.json({ error: 'No MCP server with that name.' }, 404),
 )
 
+/* ---- hooks: the workspace's own code, which needs an explicit yes --------- */
+
+app.get('/api/hooks', (c) => c.json({ pending: pendingHooks() }))
+
+app.post('/api/hooks/trust', async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { fingerprint?: string }
+  const pending = pendingHooks()
+  if (!pending) return c.json({ ok: true, pending: null })
+  /* the client sends back the fingerprint it showed the user. If the file
+     changed in between, this is not the set of commands they approved. */
+  if (body.fingerprint && body.fingerprint !== pending.fingerprint) {
+    return c.json(
+      { error: 'The hooks file changed since it was shown. Review it again.', pending: pendingHooks() },
+      409,
+    )
+  }
+  trustHooks(pending.fingerprint)
+  return c.json({ ok: true, pending: pendingHooks() })
+})
+
+app.delete('/api/hooks/trust', (c) => {
+  untrustHooks()
+  return c.json({ ok: true, pending: pendingHooks() })
+})
+
 /* ---- the run ----------------------------------------------------------- */
 
 interface RunBody {
@@ -750,6 +934,9 @@ interface RunBody {
   config?: ProviderConfig
   mode?: string
   trust?: string
+  /** model routing: 'auto' lets the run fall back across the model chain on a
+      fault; 'manual' pins the chosen model and never escalates */
+  route?: 'auto' | 'manual'
   /** confidence gate for full-trust writes — see server/confidence.ts */
   confidence?: { threshold?: number; decisionModel?: string }
   /** what the reader wants to be called, from onboarding */
@@ -781,6 +968,26 @@ app.post('/api/agent', async (c) => {
   }
   if (!config.model?.trim()) {
     return c.json({ error: 'No model selected. Open Settings and pick one.' }, 400)
+  }
+
+  /* Which folder is this run allowed to touch?
+     A saved session carries its own folder, and that is authoritative — opening
+     an old project must not inherit the folder of the one next to it. A run
+     with neither is refused rather than defaulted: the old default was the
+     user's home, which made the "jail" the whole house. */
+  const savedRoot = body.sessionId ? getSession(body.sessionId)?.workspace ?? null : null
+  const runRoot = savedRoot ?? (haveWorkspace() ? getWorkspace() : null)
+  if (!runRoot) {
+    return c.json(
+      { error: 'Choose a folder first. The agent only reads and writes inside a folder you open.' },
+      400,
+    )
+  }
+  if (!existsSync(runRoot)) {
+    return c.json(
+      { error: `The folder this session belongs to is gone: ${runRoot}. Open the session and pick the folder again.` },
+      400,
+    )
   }
 
   const runId = randomUUID()
@@ -835,17 +1042,23 @@ app.post('/api/agent', async (c) => {
     const controller = new AbortController()
     stream.onAbort(() => controller.abort())
 
-    /* the run id rides the async context, so two runs in flight cannot
-       attribute each other's writes to the journal */
-    const run = runWithRunId(runId, () =>
+    /* the run id and its folder ride the async context, so two runs in flight
+       cannot attribute each other's writes to the journal — or each other's
+       paths to the wrong project. The session rides it too: the agent bus and
+       the digest need to know which conversation is talking. */
+    const run = withRunWorkspace(runRoot, () =>
+      runWithRunId(runId, () =>
+      sessionWithId(body.sessionId ?? threadId, () =>
       runAgent({
         runId,
         threadId,
+        sessionId: body.sessionId,
         messages,
         history: Array.isArray(body.history) ? body.history.slice(-400) : undefined,
         config,
         mode,
         trust,
+        route: body.route === 'manual' ? 'manual' : 'auto',
         /* the confidence gate rides the run, so full-trust still parks the
            writes it is not sure about */
         confidence,
@@ -856,6 +1069,8 @@ app.post('/api/agent', async (c) => {
         emit,
         abortSignal: controller.signal,
       }),
+      ),
+      ),
     ).finally(() => {
       liveThreads.delete(threadId)
       finished = true

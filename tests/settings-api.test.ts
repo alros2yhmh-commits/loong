@@ -1,8 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { spawn, type ChildProcess } from 'node:child_process'
 
 /* ---------------------------------------------------------------------------
    The gaps that blocked the interface, tested.
@@ -13,59 +14,77 @@ import { tmpdir } from 'node:os'
    list that drifts.
    G5 — a restored session showed nothing until the next run started.
 
-   These tests start the real server on a scratch port and drive it over HTTP,
-   because the contract that matters is the one the interface will consume.
+   These tests start the real server and drive it over HTTP, because the
+   contract that matters is the one the interface will consume.
+
+   The server is asked for port 0 and the port it actually bound is read back
+   from its own banner: a fixed port turns "the previous run has not died yet"
+   into a test failure, and a fixed data directory does the same across files.
    --------------------------------------------------------------------------- */
 
-const PORT = 5399
-const BASE = `http://127.0.0.1:${PORT}`
+const dataDir = mkdtempSync(join(tmpdir(), 'loong-settings-'))
 
-let server: { proc: ReturnType<typeof import('node:child_process').spawn>; close: () => void } | null =
-  null
+let base = ''
+let proc: ChildProcess | null = null
+let boot = ''
 
-async function start() {
-  if (server) return
-  const { spawn } = await import('node:child_process')
-  const proc = spawn(
-    process.execPath,
-    ['--import', 'tsx', 'server/start.ts', '--port', String(PORT)],
-    {
-      stdio: 'ignore',
+/** wait for the server's own announcement, or for it to die trying */
+function start(): Promise<void> {
+  if (base) return Promise.resolve()
+  return new Promise((resolve, reject) => {
+    proc = spawn(process.execPath, ['--import', 'tsx', 'server/start.ts'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
       env: {
         ...process.env,
-        LOONG_PORT: String(PORT),
-        LOONG_DATA_DIR: join(tmpdir(), 'loong-test'),
+        LOONG_PORT: '0',
+        LOONG_DATA_DIR: dataDir,
         NO_PROXY: '127.0.0.1,localhost',
       },
-    },
-  )
-  await new Promise((r) => setTimeout(r, 2500))
-  server = { proc, close: () => proc.kill() }
+    })
+
+    const timer = setTimeout(() => {
+      reject(new Error(`the server did not announce a port in 30s. its output was:\n${boot}`))
+    }, 30_000)
+
+    const onData = (chunk: Buffer) => {
+      boot += chunk.toString()
+      const m = /agent server\s+http:\/\/[^:]+:(\d+)/.exec(boot)
+      if (!m) return
+      clearTimeout(timer)
+      base = `http://127.0.0.1:${m[1]}`
+      resolve()
+    }
+    proc.stdout?.on('data', onData)
+    proc.stderr?.on('data', (c: Buffer) => {
+      boot += c.toString()
+    })
+    proc.on('exit', (code) => {
+      clearTimeout(timer)
+      if (!base) {
+        reject(new Error(`the server exited (code ${code}) before it was ready:\n${boot}`))
+      }
+    })
+  })
 }
 
 const get = async (path: string) => {
-  const r = await fetch(BASE + path)
-  return { status: r.status, body: await r.json().catch(() => null) }
-}
-const put = async (path: string, body: unknown) => {
-  const r = await fetch(BASE + path, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  return { status: r.status, body: await r.json().catch(() => null) }
-}
-const post = async (path: string, body: unknown = {}) => {
-  const r = await fetch(BASE + path, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  return { status: r.status, body: await r.json().catch(() => null) }
-}
-
-test('G1: settings persist and survive a restart', async (t) => {
   await start()
+  const r = await fetch(base + path)
+  return { status: r.status, body: await r.json().catch(() => null) }
+}
+const send = async (method: string, path: string, body?: unknown) => {
+  await start()
+  const r = await fetch(base + path, {
+    method,
+    headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  return { status: r.status, body: await r.json().catch(() => null) }
+}
+const put = (path: string, body: unknown) => send('PUT', path, body)
+const post = (path: string, body: unknown = {}) => send('POST', path, body)
+
+test('G1: settings persist and survive a restart', async () => {
   const first = await get('/api/settings')
   assert.equal(first.status, 200)
   assert.ok(first.body.settings, 'the settings object is present')
@@ -85,26 +104,19 @@ test('G1: settings persist and survive a restart', async (t) => {
 
   /* a bad value is coerced, never stored — a setting is not trusted because it
      arrived over HTTP */
-  const bad = await put('/api/settings', { settings: { fontSize: 999, view: 'nonsense', volume: 12 } })
-  assert.equal(bad.body.settings.fontSize, 20, 'fontSize clamps to 20')
+  const bad = await put('/api/settings', {
+    settings: { fontSize: 999, view: 'nonsense', volume: 12 },
+  })
+  assert.equal(bad.body.settings.fontSize, 24, 'fontSize clamps to the 24px ceiling')
   assert.equal(bad.body.settings.view, 'normal', 'an unknown view falls back')
   assert.equal(bad.body.settings.volume, 1, 'volume clamps to 1')
 
   /* the file is on disk — this is the whole difference from localStorage */
-  const dir = join(tmpdir(), 'loong-test')
-  const raw = JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'))
-  assert.equal(raw.settings.fontSize, 20)
-  t.after(() => {
-    try {
-      rmSync(dir, { recursive: true, force: true })
-    } catch {
-      /* a scratch dir is not worth failing over */
-    }
-  })
+  const raw = JSON.parse(readFileSync(join(dataDir, 'settings.json'), 'utf8'))
+  assert.equal(raw.settings.fontSize, 24)
 })
 
 test('G1: a partial update merges instead of replacing', async () => {
-  await start()
   await put('/api/settings', { settings: { model: 'keep-me', userName: 'Prof' } })
   const after = await put('/api/settings', { settings: { fontSize: 15 } })
   assert.equal(after.body.settings.model, 'keep-me', 'an unrelated field survives')
@@ -113,7 +125,6 @@ test('G1: a partial update merges instead of replacing', async () => {
 })
 
 test('G3: the tool manifest is published', async () => {
-  await start()
   const r = await get('/api/tools')
   assert.equal(r.status, 200)
   const names = r.body.tools.map((x: { name: string }) => x.name)
@@ -122,12 +133,14 @@ test('G3: the tool manifest is published', async () => {
   }
   /* every entry declares its access level, so the UI can show what asks first */
   for (const tool of r.body.tools) {
-    assert.ok(['read', 'write', 'ask', 'plan'].includes(tool.access), `${tool.name} has an access level`)
+    assert.ok(
+      ['read', 'write', 'ask', 'plan'].includes(tool.access),
+      `${tool.name} has an access level`,
+    )
   }
 })
 
 test('G5: a restored session reports its state', async () => {
-  await start()
   const created = await post('/api/sessions', {})
   assert.equal(created.status, 201)
   const id = created.body.session.id
@@ -137,10 +150,15 @@ test('G5: a restored session reports its state', async () => {
   assert.equal(state.body.blocks, 0)
   assert.equal(state.body.running, false, 'a fresh session is not running')
   assert.equal(state.body.plan, null, 'a fresh session has no plan')
-  await fetch(`${BASE}/api/sessions/${id}`, { method: 'DELETE' })
+  await send('DELETE', `/api/sessions/${id}`)
 })
 
 test.after(() => {
-  server?.close()
-  server = null
+  proc?.kill()
+  proc = null
+  try {
+    rmSync(dataDir, { recursive: true, force: true })
+  } catch {
+    /* a scratch dir is not worth failing over */
+  }
 })

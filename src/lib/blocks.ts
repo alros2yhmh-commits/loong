@@ -41,6 +41,46 @@ export type Block =
   | { k: 'stop'; id: string; reason: string; text: string; model?: string; at: number }
   | { k: 'subagent'; id: string; scope: string; task: string; phase: string; detail?: string; at: number }
   | { k: 'failed'; id: string; cause: string; detail: string; model?: string; at: number }
+  /* the execution cycle: one row per run, updated in place as phases move */
+  | {
+      k: 'cycle'
+      id: string
+      phase: string
+      from: string
+      reason: string
+      step: number
+      reads: number
+      writes: number
+      checks: number
+      failures: number
+      at: number
+    }
+  /* what the graph indexed — a small, factual card */
+  | {
+      k: 'graph'
+      id: string
+      files: number
+      sourceFiles: number
+      symbols: number
+      edges: number
+      cycles: number
+      languages: { lang: string; count: number }[]
+      at: number
+    }
+  /* one security finding, with the CWE page that explains it */
+  | {
+      k: 'finding'
+      id: string
+      severity: string
+      rule: string
+      file: string
+      line: number
+      snippet: string
+      kb: string | null
+      at: number
+    }
+  /* the ledger counts after a scan */
+  | { k: 'findings'; id: string; open: number; critical: number; added: number; revived: number; at: number }
 
 /** the AG-UI events the interface consumes */
 export interface AgentEvent {
@@ -93,8 +133,7 @@ export function fold(blocks: Block[], e: AgentEvent): Block[] {
       return next
     }
 
-    case 'THINKING_TEXT_MESSAGE_CONTENT':
-    case 'THINKING_START': {
+    case 'REASONING_MESSAGE_CONTENT': {
       const delta = e.delta ?? ''
       const last = next[next.length - 1]
       if (last && last.k === 'thinking') {
@@ -108,6 +147,12 @@ export function fold(blocks: Block[], e: AgentEvent): Block[] {
       next.push({ k: 'thinking', id: newId(), text: delta, at, chars: delta.length })
       return next
     }
+    /* markers only — the content arrives through REASONING_MESSAGE_CONTENT */
+    case 'REASONING_START':
+    case 'REASONING_MESSAGE_START':
+    case 'REASONING_MESSAGE_END':
+    case 'REASONING_END':
+      return next
 
     case 'TOOL_CALL_START': {
       next.push({
@@ -141,7 +186,14 @@ export function fold(blocks: Block[], e: AgentEvent): Block[] {
           next[i] = {
             ...b,
             result: e.result ?? b.result,
-            ok: e.isError === true ? false : true,
+            /* the kernel says isError; a transcript stored before that field
+               existed is judged by what the tool actually said */
+            ok:
+              e.isError === true
+                ? false
+                : !/^(?:Tool failed|Refused:|Could not |Browser failed|Request failed)/.test(
+                    String(e.result ?? ''),
+                  ),
             live: false,
           }
         }
@@ -246,7 +298,9 @@ export function fold(blocks: Block[], e: AgentEvent): Block[] {
           ? 'Stopped at the step budget — the task needed more turns than this run allows. Send "continue", or split it into smaller pieces.'
           : reason === 'aborted'
             ? 'Stopped on request.'
-            : 'The run finished.'
+            : reason === 'stopped-short'
+              ? `The run ended with ${Number(v.openSteps ?? 0) || 'some'} plan step(s) still open and nothing changed. Send "continue" to do the work.`
+              : 'The run finished.'
       next.push({ k: 'stop', id: newId(), reason, text: word, model, at })
       return next
     }
@@ -255,6 +309,113 @@ export function fold(blocks: Block[], e: AgentEvent): Block[] {
       const text = String(v.text ?? v.detail ?? v.reason ?? '')
       if (!text) return next
       next.push({ k: 'notice', id: newId(), text, at })
+      return next
+    }
+    /* ---- the cycle, the graph and the findings -------------------------- */
+    case 'loong.cycle': {
+      const phase = String(v.phase ?? '')
+      if (!phase) return next
+      const row = {
+        k: 'cycle' as const,
+        id: newId(),
+        phase,
+        from: String(v.from ?? ''),
+        reason: String(v.reason ?? ''),
+        step: Number(v.step ?? 0),
+        reads: Number(v.reads ?? 0),
+        writes: Number(v.writes ?? 0),
+        checks: Number(v.checks ?? 0),
+        failures: Number(v.failures ?? 0),
+        at,
+      }
+      /* a new run starts at intake — that is a new row. A step inside the same
+         run updates the row in place, so the transcript shows one cycle card,
+         not six. */
+      if (phase === 'intake') {
+        next.push(row)
+        return next
+      }
+      for (let i = next.length - 1; i >= 0; i--) {
+        const b = next[i]
+        if (b.k === 'cycle') {
+          next[i] = { ...row, id: b.id }
+          return next
+        }
+      }
+      next.push(row)
+      return next
+    }
+    case 'loong.graph': {
+      const files = Number(v.files ?? 0)
+      if (!files) return next
+      const row = {
+        k: 'graph' as const,
+        id: newId(),
+        files,
+        sourceFiles: Number(v.sourceFiles ?? 0),
+        symbols: Number(v.symbols ?? 0),
+        edges: Number(v.edges ?? 0),
+        cycles: Number(v.cycles ?? 0),
+        languages: Array.isArray(v.languages)
+          ? (v.languages as { lang?: unknown; count?: unknown }[])
+              .filter((l) => typeof l?.lang === 'string')
+              .map((l) => ({ lang: String(l.lang), count: Number(l.count ?? 0) }))
+          : [],
+        at,
+      }
+      const last = next[next.length - 1]
+      if (last && last.k === 'graph') {
+        next[next.length - 1] = { ...row, id: last.id }
+        return next
+      }
+      next.push(row)
+      return next
+    }
+    case 'loong.finding': {
+      const rule = String(v.rule ?? '')
+      const file = String(v.file ?? '')
+      if (!rule) return next
+      /* one row per rule+file: a second report of the same issue updates the
+         line and snippet instead of stacking a duplicate card */
+      for (let i = next.length - 1; i >= 0; i--) {
+        const b = next[i]
+        if (b.k === 'finding' && b.rule === rule && b.file === file) {
+          next[i] = {
+            ...b,
+            severity: String(v.severity ?? b.severity),
+            line: Number(v.line ?? b.line),
+            snippet: String(v.snippet ?? b.snippet),
+            kb: v.kb ? String(v.kb) : b.kb,
+            at,
+          }
+          return next
+        }
+        /* only look inside this run's tail — an old run's finding is history */
+        if (b.k === 'cycle' || b.k === 'user') break
+      }
+      next.push({
+        k: 'finding',
+        id: newId(),
+        severity: String(v.severity ?? 'medium'),
+        rule,
+        file,
+        line: Number(v.line ?? 0),
+        snippet: String(v.snippet ?? ''),
+        kb: v.kb ? String(v.kb) : null,
+        at,
+      })
+      return next
+    }
+    case 'loong.findings': {
+      next.push({
+        k: 'findings',
+        id: newId(),
+        open: Number(v.open ?? 0),
+        critical: Number(v.critical ?? 0),
+        added: Number(v.added ?? 0),
+        revived: Number(v.revived ?? 0),
+        at,
+      })
       return next
     }
     case 'loong.tool_duration': {
@@ -325,6 +486,73 @@ export function splitToolCalls(text: string): { prose: string; calls: string } {
   const prose = text.slice(0, i).trimEnd()
   const calls = text.slice(i + m[0].length).trim()
   return { prose, calls }
+}
+
+/** the conversation the model should see — including tool calls and results */
+export type AgentHistoryTurn = {
+  role: 'user' | 'assistant' | 'tool'
+  content: string
+  toolCalls?: { toolCallId: string; toolName: string; input: unknown }[]
+  toolResults?: { toolCallId: string; toolName: string; output: string; ok: boolean }[]
+}
+
+const INTERRUPTED =
+  'Interrupted before this tool returned — the thread was closed or the run was stopped. Nothing was recorded; re-run it if it still matters.'
+
+function parseArgs(raw?: string): unknown {
+  if (!raw) return {}
+  try {
+    return JSON.parse(raw) as unknown
+  } catch {
+    return { raw }
+  }
+}
+
+/**
+ * Rebuild the model's history from transcript blocks. User turns, assistant
+ * prose, and real tool rows all survive. Thinking, notices and UI chrome do not.
+ */
+export function toAgentHistory(blocks: Block[]): AgentHistoryTurn[] {
+  const out: AgentHistoryTurn[] = []
+  const pending: Extract<Block, { k: 'tool' }>[] = []
+
+  const flushTools = () => {
+    if (pending.length === 0) return
+    const group = pending.splice(0, pending.length)
+    out.push({
+      role: 'assistant',
+      content: '',
+      toolCalls: group.map((t) => ({
+        toolCallId: t.id,
+        toolName: t.tool,
+        input: parseArgs(t.args),
+      })),
+    })
+    out.push({
+      role: 'tool',
+      content: '',
+      toolResults: group.map((t) => ({
+        toolCallId: t.id,
+        toolName: t.tool,
+        output: t.live ? INTERRUPTED : (t.result ?? ''),
+        ok: t.live ? false : t.ok !== false,
+      })),
+    })
+  }
+
+  for (const b of blocks) {
+    if (b.k === 'user') {
+      flushTools()
+      if (b.text.trim()) out.push({ role: 'user', content: b.text })
+    } else if (b.k === 'text') {
+      flushTools()
+      if (b.text.trim()) out.push({ role: 'assistant', content: b.text })
+    } else if (b.k === 'tool') {
+      pending.push(b)
+    }
+  }
+  flushTools()
+  return out
 }
 
 /** one line a tool row can show while it runs and after it finishes */

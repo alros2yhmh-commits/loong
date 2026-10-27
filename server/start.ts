@@ -7,6 +7,7 @@ import { loadKeys } from './keys.ts'
    edges, and a headless mode that silently disappears from the shipped bundle
    is worse than a few extra kilobytes */
 import { main as headlessMain } from './headless.ts'
+import { stopAllServers } from './servers.ts'
 
 /* Entry point for the agent process. Kept separate from the routes so the app
    can be imported by tests without a socket being opened. */
@@ -30,6 +31,7 @@ if (process.argv[2] === 'run') {
   })
 
   const shutdown = () => {
+    void stopAllServers()
     server.close(() => process.exit(0))
     setTimeout(() => process.exit(0), 1500).unref()
   }

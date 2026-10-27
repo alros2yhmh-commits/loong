@@ -4,7 +4,8 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeSanitize from 'rehype-sanitize'
 import { api, type ApprovalRequest, type Plan, type PlanStep, type QuestionRequest, type Audit } from '../lib/api'
-import { splitToolCalls, type Block } from '../lib/blocks'
+import { splitToolCalls, toolSummary, type Block } from '../lib/blocks'
+import { TRANSCRIPT_PAGE, TRANSCRIPT_TAIL, windowBlocks } from '../lib/window'
 import { Dragon, Working } from './Dragon'
 import { t, e, rise, card, collapse, stagger } from '../lib/motion'
 
@@ -148,6 +149,39 @@ function Code({ text, tone = 3, max = 2400 }: { text: string; tone?: 2 | 3; max?
     >
       {text.length > max ? `${text.slice(0, max)}\n…` : text}
     </pre>
+  )
+}
+
+/* A tool's arguments, drawn as quiet chips (name=value) instead of a raw JSON
+   blob — the reference agent shows parameters this way, and it reads far better
+   than a wall of escaped JSON. Long values are clipped; the full payload is
+   still a click away inside the row. */
+function ToolChips({ args }: { args?: string }) {
+  if (!args) return null
+  let parsed: Record<string, unknown>
+  try {
+    parsed = JSON.parse(args) as Record<string, unknown>
+  } catch {
+    return null
+  }
+  const entries = Object.entries(parsed).slice(0, 5)
+  if (entries.length === 0) return null
+  return (
+    <div className="mt-[3px] flex flex-wrap gap-[5px]">
+      {entries.map(([k, v]) => {
+        const val = typeof v === 'string' ? v : JSON.stringify(v)
+        return (
+          <span
+            key={k}
+            className="mono rounded-[5px] px-[6px] py-[2px] t-tiny"
+            style={{ border: '1px solid var(--line-2)', background: 'var(--canvas)', color: 'var(--text-3)' }}
+          >
+            <span style={{ color: 'var(--text-4)' }}>{k}=</span>
+            {val.length > 64 ? `${val.slice(0, 63)}…` : val}
+          </span>
+        )
+      })}
+    </div>
   )
 }
 
@@ -547,7 +581,21 @@ function AuditCard({ audit }: { audit: Audit }) {
 
 /* ---- the empty state ----------------------------------------------------- */
 
-export function EmptyState({ running }: { running: boolean }) {
+const SUGGESTIONS = [
+  'Explain this folder',
+  'Run the tests and fix what fails',
+  'Scan for security issues',
+  'What changed since the last commit?',
+]
+
+export function EmptyState({
+  running,
+  onPick,
+}: {
+  running: boolean
+  /** fill the composer with a suggestion — the reader still presses send */
+  onPick?: (text: string) => void
+}) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
@@ -575,7 +623,146 @@ export function EmptyState({ running }: { running: boolean }) {
         Describe the work. The agent reads the folder, makes a plan, and shows you every change
         before it lands.
       </motion.p>
+      {onPick && !running && (
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2, duration: t.slow, ease: e.out }}
+          className="mt-[18px] flex max-w-[440px] flex-wrap justify-center gap-[7px]"
+        >
+          {SUGGESTIONS.map((s) => (
+            <button
+              key={s}
+              type="button"
+              className="ctl rounded-full px-[11px] py-[5px] t-tiny"
+              style={{ border: '1px solid var(--line-2)', color: 'var(--text-2)', background: 'var(--surface)' }}
+              onClick={() => onPick(s)}
+            >
+              {s}
+            </button>
+          ))}
+        </motion.div>
+      )}
     </motion.div>
+  )
+}
+
+/* ---- the cycle, the graph, the findings ---------------------------------- */
+
+const CYCLE_PHASES = ['intake', 'recon', 'plan', 'act', 'verify', 'reflect'] as const
+
+/** the run's phase, as a strip. The phase is what the run is doing NOW, so it
+ *  is read from the deterministic state machine, never inferred from prose. */
+function CycleCard({ b }: { b: Extract<Block, { k: 'cycle' }> }) {
+  const at = CYCLE_PHASES.indexOf(b.phase as (typeof CYCLE_PHASES)[number])
+  return (
+    <motion.div
+      variants={rise}
+      initial="initial"
+      animate="animate"
+      className="rounded-[11px] px-[13px] py-[9px]"
+      style={{ border: '1px solid var(--line-1)', background: 'var(--surface)' }}
+      aria-label={`Execution cycle: ${b.phase}`}
+    >
+      <div className="flex flex-wrap items-center gap-[12px]">
+        {CYCLE_PHASES.map((phase, i) => (
+          <span key={phase} className="flex items-center gap-[6px]">
+            <span
+              className="inline-block h-[3px] w-[10px] rounded-full"
+              style={{
+                background: i === at ? 'var(--amber)' : i < at ? 'var(--line-3)' : 'var(--line-2)',
+              }}
+            />
+            <span
+              className="mono t-tiny"
+              style={{ color: i === at ? 'var(--amber)' : i < at ? 'var(--text-2)' : 'var(--text-3)' }}
+            >
+              {phase}
+            </span>
+          </span>
+        ))}
+      </div>
+      <p className="mono m-0 mt-[6px] t-tiny" style={{ color: 'var(--text-3)' }}>
+        {b.reason || 'working'}
+        {` · ${b.writes} write${b.writes === 1 ? '' : 's'} · ${b.checks} check${b.checks === 1 ? '' : 's'}`}
+        {b.failures ? ` · ${b.failures} failed` : ''}
+      </p>
+    </motion.div>
+  )
+}
+
+function GraphCard({ b }: { b: Extract<Block, { k: 'graph' }> }) {
+  return (
+    <motion.div
+      variants={rise}
+      initial="initial"
+      animate="animate"
+      className="rounded-[11px] px-[13px] py-[9px]"
+      style={{ border: '1px solid var(--line-1)' }}
+      aria-label="Repository graph"
+    >
+      <p className="m-0 t-tiny" style={{ color: 'var(--text-3)' }}>
+        <span className="mono" style={{ color: 'var(--text-2)' }}>graph</span>
+        {` · ${b.sourceFiles} source file${b.sourceFiles === 1 ? '' : 's'} · ${b.symbols} symbol${b.symbols === 1 ? '' : 's'} · ${b.edges} import${b.edges === 1 ? '' : 's'}`}
+        {b.cycles ? ` · ${b.cycles} cycle${b.cycles === 1 ? '' : 's'}` : ''}
+      </p>
+      {b.languages.length > 0 && (
+        <p className="mono m-0 mt-[4px] t-tiny" style={{ color: 'var(--text-3)' }}>
+          {b.languages.slice(0, 6).map((l) => `${l.lang} ${l.count}`).join('  ·  ')}
+        </p>
+      )}
+    </motion.div>
+  )
+}
+
+const SEVERITY_COLOR: Record<string, string> = {
+  critical: 'var(--fail)',
+  high: 'var(--amber)',
+  medium: 'var(--text-1)',
+  low: 'var(--text-3)',
+}
+
+function FindingCard({ b }: { b: Extract<Block, { k: 'finding' }> }) {
+  return (
+    <motion.div
+      variants={rise}
+      initial="initial"
+      animate="animate"
+      className="rounded-[11px] px-[13px] py-[9px]"
+      style={{ borderLeft: `2px solid ${SEVERITY_COLOR[b.severity] ?? 'var(--line-3)'}`, background: 'var(--surface)' }}
+      aria-label={`${b.severity} finding: ${b.rule}`}
+    >
+      <div className="flex flex-wrap items-baseline gap-[8px]">
+        <span className="mono t-tiny uppercase tracking-[0.1em]" style={{ color: SEVERITY_COLOR[b.severity] ?? 'var(--text-2)' }}>
+          {b.severity}
+        </span>
+        <span className="mono t-tiny" style={{ color: 'var(--text-2)' }}>{b.rule}</span>
+        {b.kb && <span className="mono t-tiny" style={{ color: 'var(--text-3)' }}>{b.kb}</span>}
+      </div>
+      <p className="mono m-0 mt-[4px] t-tiny" style={{ color: 'var(--text-3)' }}>
+        {b.file}{b.line ? `:${b.line}` : ''}
+      </p>
+      {b.snippet && (
+        <pre className="mono m-0 mt-[5px] overflow-x-auto whitespace-pre-wrap break-words t-tiny" style={{ color: 'var(--text-2)' }}>
+          {b.snippet}
+        </pre>
+      )}
+    </motion.div>
+  )
+}
+
+function FindingsCard({ b }: { b: Extract<Block, { k: 'findings' }> }) {
+  const calm = b.critical === 0 && b.open === 0
+  return (
+    <motion.p
+      variants={rise}
+      initial="initial"
+      animate="animate"
+      className="mono m-0 px-[6px] t-tiny"
+      style={{ color: b.critical > 0 ? 'var(--fail)' : calm ? 'var(--text-3)' : 'var(--amber)' }}
+    >
+      {`security ledger · ${b.open} open${b.critical ? ` (${b.critical} critical)` : ''} · ${b.added} new · ${b.revived} regression${b.revived === 1 ? '' : 's'}`}
+    </motion.p>
   )
 }
 
@@ -585,13 +772,27 @@ export function Transcript(p: TranscriptProps) {
   const verbose = p.view === 'verbose'
   const showThinking = p.view === 'thinking' || verbose
   const last = p.blocks[p.blocks.length - 1]
+  /* a very long thread renders its tail, not its whole history — see window.ts */
+  const [extra, setExtra] = useState(0)
+  const { start, shown } = windowBlocks(p.blocks, TRANSCRIPT_TAIL + extra)
 
   return (
     <div
       className="mx-auto flex w-full flex-col gap-[14px] px-[28px] py-[20px]"
       style={{ maxWidth: 'var(--thread-measure)' }}
     >
-      {p.blocks.map((b, i) => {
+      {start > 0 && (
+        <button
+          type="button"
+          onClick={() => setExtra((n) => n + TRANSCRIPT_PAGE)}
+          className="ctl mx-auto rounded-[7px] px-[12px] py-[5px] t-small"
+          style={{ border: '1px solid var(--line-2)', color: 'var(--text-2)' }}
+        >
+          Show {start} earlier block{start === 1 ? '' : 's'}
+        </button>
+      )}
+      {shown.map((b, offset) => {
+        const i = start + offset
         switch (b.k) {
           case 'user':
             return (
@@ -612,7 +813,18 @@ export function Transcript(p: TranscriptProps) {
             return (
               <motion.div key={b.id} variants={rise} initial="initial" animate="animate">
                 <div className="md bidi" dir="auto" style={{ color: 'var(--text-1)' }}>
-                  {prose && <ClampedMarkdown prose={prose} streaming={b.streaming} />}
+                  {prose &&
+                    /* While streaming, show the raw token stream without a full
+                       markdown re-parse on every delta — re-parsing the whole
+                       document per token is what made the writing choppy. A soft
+                       fade-in gives it flow; the real markdown renders once done. */
+                    (b.streaming ? (
+                      <span className="streaming-prose" style={{ whiteSpace: 'pre-wrap' }}>
+                        {prose}
+                      </span>
+                    ) : (
+                      <ClampedMarkdown prose={prose} />
+                    ))}
                   {b.streaming && <span className="caret" aria-hidden />}
                 </div>
 
@@ -649,11 +861,13 @@ export function Transcript(p: TranscriptProps) {
             )
 
           case 'tool': {
-            /* group a long run of the same tool (e.g. 50 read_file) into one
-               row that says how many there were, instead of a wall of rows. */
+            /* Fold a run of the same tool into one row. TWO calls is already a run
+               — the reference agents fold from the second one, and waiting for a
+               third left the reader staring at a wall of identical rows. */
+            const summary = toolSummary(b)
             const prev = p.blocks[i - 1]
             const next = p.blocks[i + 1]
-            const samePrev = prev?.k === 'tool' && prev.tool === b.tool
+            const samePrev = i > start && prev?.k === 'tool' && prev.tool === b.tool
             const sameNext = next?.k === 'tool' && next.tool === b.tool
             if (samePrev) return null
             let count = 1
@@ -666,7 +880,7 @@ export function Transcript(p: TranscriptProps) {
                 j++
               }
             }
-            if (count > 2) {
+            if (count > 1) {
               const group = p.blocks.slice(i, i + count) as Extract<Block, { k: 'tool' }>[]
               const live = group.some((g) => g.live)
               const failed = group.some((g) => g.ok === false)
@@ -675,9 +889,21 @@ export function Transcript(p: TranscriptProps) {
                 <motion.div key={`grp-${b.id}`} variants={rise} initial="initial" animate="animate">
                   <RailRow
                     state={live ? 'live' : failed ? 'failed' : 'done'}
-                    label={<span className="mono">{b.tool}</span>}
+                    label={
+                      <span className="flex flex-col gap-[2px]">
+                        <span className="flex items-baseline gap-[6px]">
+                          <span className="mono">{b.tool}</span>
+                          {summary && (
+                            <span className="truncate t-tiny" style={{ color: 'var(--text-4)' }}>
+                              {summary}
+                            </span>
+                          )}
+                        </span>
+                        <ToolChips args={group[0]?.args} />
+                      </span>
+                    }
                     meta={<span>{count} calls · {live ? 'running' : `${(totalMs / 1000).toFixed(1)}s`}</span>}
-                    startOpen={verbose}
+                    startOpen={verbose || live}
                   >
                     <div className="flex flex-col gap-[6px]">
                       {group.slice(0, verbose ? group.length : 3).map((g) => (
@@ -701,13 +927,27 @@ export function Transcript(p: TranscriptProps) {
               <motion.div key={b.id} variants={rise} initial="initial" animate="animate">
                 <RailRow
                   state={b.live ? 'live' : b.ok === false ? 'failed' : 'done'}
-                  label={<span className="mono">{b.wire}</span>}
+                  label={
+                    <span className="flex flex-col gap-[2px]">
+                      <span className="flex items-baseline gap-[6px]">
+                        <span className="mono">{b.wire}</span>
+                        {summary && (
+                          <span className="truncate t-tiny" style={{ color: 'var(--text-4)' }}>
+                            {summary}
+                          </span>
+                        )}
+                      </span>
+                      <ToolChips args={b.args} />
+                    </span>
+                  }
                   meta={
                     <>
                       {b.live ? 'running' : b.ms ? `${(b.ms / 1000).toFixed(1)}s` : ''}
                     </>
                   }
-                  startOpen={verbose || b.ok === false}
+                  /* a row that is running is open: the whole point of a live row is
+                     watching the output arrive, not clicking it open to check */
+                  startOpen={verbose || b.live || b.ok === false}
                 >
                   <div className="flex flex-col gap-[6px]">
                     {b.args && <Code text={b.args} tone={3} max={1400} />}
@@ -758,8 +998,16 @@ export function Transcript(p: TranscriptProps) {
             return (
               <motion.div key={b.id} variants={rise} initial="initial" animate="animate">
                 <RailRow
-                  state={b.reason === 'step-limit' ? 'failed' : 'done'}
-                  label={<span className="mono">{b.reason === 'step-limit' ? 'step limit reached' : 'stopped'}</span>}
+                  state={b.reason === 'step-limit' || b.reason === 'stopped-short' ? 'failed' : 'done'}
+                  label={
+                    <span className="mono">
+                      {b.reason === 'step-limit'
+                        ? 'step limit reached'
+                        : b.reason === 'stopped-short'
+                          ? 'stopped short'
+                          : 'stopped'}
+                    </span>
+                  }
                   meta={b.model}
                 >
                   <p className="bidi m-0 t-small leading-[1.6]" style={{ color: 'var(--text-2)' }}>
@@ -794,6 +1042,18 @@ export function Transcript(p: TranscriptProps) {
                 </RailRow>
               </motion.div>
             )
+
+          case 'cycle':
+            return <CycleCard key={b.id} b={b} />
+
+          case 'graph':
+            return <GraphCard key={b.id} b={b} />
+
+          case 'finding':
+            return <FindingCard key={b.id} b={b} />
+
+          case 'findings':
+            return <FindingsCard key={b.id} b={b} />
 
           case 'failed':
             return (

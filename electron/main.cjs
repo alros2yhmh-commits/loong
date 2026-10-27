@@ -7,10 +7,12 @@
    --------------------------------------------------------------------------- */
 const { app, BrowserWindow, Menu, dialog, ipcMain, shell } = require('electron')
 const { spawn } = require('node:child_process')
+const crypto = require('node:crypto')
 const path = require('node:path')
 const fs = require('node:fs')
 
 const AGENT_PORT = 5274
+const SESSION_TOKEN = crypto.randomBytes(24).toString('hex')
 let agent = null
 
 function agentPath() {
@@ -33,9 +35,13 @@ function startAgent() {
       ...process.env,
       ELECTRON_RUN_AS_NODE: '1',
       LOONG_PORT: String(AGENT_PORT),
-      /* a fresh install must work in the reader's folder, not in the folder the
-         sidecar happens to live in */
-      LOONG_WORKSPACE: app.getPath('home'),
+      LOONG_TOKEN: SESSION_TOKEN,
+      LOONG_VERSION: app.getVersion(),
+      /* No workspace is handed over on purpose. The sidecar used to start with
+         the whole home folder as its root, which made "read the folder I
+         opened" include Desktop, .agent-collab and this app's own source. The
+         reader opens a folder in the interface; until then the file tools
+         refuse, and the last chosen folder is restored from LOONG's data dir. */
       NO_PROXY: '127.0.0.1,localhost',
     },
     stdio: 'ignore',
@@ -74,25 +80,63 @@ function createWindow() {
     minWidth: 900,
     minHeight: 600,
     show: false,
-    backgroundColor: '#0e0e10',
+    backgroundColor: '#1a1a1e',
     title: 'Loong',
     /* no OS title bar; Windows still draws min / max / close over the content
-       through titleBarOverlay, so snap, resize and drag are native */
+       through titleBarOverlay, so snap, resize and drag are native. The overlay
+       colour is the app's canvas, not near-black: the two used to disagree, and
+       the native buttons sat in a darker band that read as another application. */
     titleBarStyle: 'hidden',
     titleBarOverlay: {
-      color: '#0e0e10',
-      symbolColor: '#a3a39e',
+      color: '#1a1a1e',
+      /* the ink is the app's text-2, so the native controls belong to the
+         window instead of being the dimmest thing on it */
+      symbolColor: '#c2c2bd',
       height: 38,
     },
     autoHideMenuBar: true,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      /* The token reaches the renderer over a synchronous IPC call at preload
+         time. It used to travel as a command-line argument, which made it
+         readable by any process on the machine that could enumerate arguments
+         — a credential in a list every monitoring tool prints. */
       preload: path.join(__dirname, 'preload.cjs'),
     },
   })
   /* belt and braces: some Windows builds still paint the bar after autoHide */
   win.setMenuBarVisibility(false)
+
+  /* The window shows one document, forever. Anything that would navigate the
+     frame — a link in a transcript, a redirect, a drag-and-drop of a file onto
+     the window — is either handed to the OS browser or refused. Without this,
+     a crafted message could turn the app into a browser pointed at a page that
+     can read the loopback API. */
+  win.webContents.on('will-navigate', (event, url) => {
+    if (url === win.webContents.getURL()) return
+    event.preventDefault()
+    try {
+      const u = new URL(url)
+      if (u.protocol === 'http:' || u.protocol === 'https:') shell.openExternal(u.toString())
+    } catch {
+      /* not a URL worth opening */
+    }
+  })
+
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const u = new URL(url)
+      if (u.protocol === 'http:' || u.protocol === 'https:') shell.openExternal(u.toString())
+    } catch {
+      /* not a URL worth opening */
+    }
+    return { action: 'deny' }
+  })
+
+  /* No webview, ever. The app has no feature that needs one, and an attached
+     webview inherits the session. */
+  win.webContents.on('will-attach-webview', (event) => event.preventDefault())
 
   /* the renderer may never report a first paint here (no GPU process, hidden
      title bar), so ready-to-show is an optimisation, not the only path */
@@ -135,6 +179,12 @@ app.whenReady().then(() => {
   ipcMain.handle('pick-workspace', async () => {
     const r = await dialog.showOpenDialog({ properties: ['openDirectory'] })
     return r.canceled ? null : r.filePaths[0]
+  })
+
+  /* Synchronous on purpose: the preload needs the token before any module
+     script runs, and an async round-trip would race the first fetch. */
+  ipcMain.on('loong:token', (event) => {
+    event.returnValue = SESSION_TOKEN
   })
 
   ipcMain.handle('open-external', async (_e, url) => {

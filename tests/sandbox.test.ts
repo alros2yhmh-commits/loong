@@ -1,18 +1,19 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isAbsolute, relative, resolve } from 'node:path'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import {
   WorkspaceViolation,
   clip,
   displayPath,
-  getWorkspace,
   resolveInside,
+  setWorkspace,
 } from '../server/config.ts'
 
-/* The boundary is no longer a frozen constant — it can be repointed at runtime.
-   These are pure path tests, so snapshot the current root once and check
-   against it. */
-const WORKSPACE = getWorkspace()
+/* There is no default workspace any more — a folder is chosen or refused. These
+   pure path tests choose a throwaway one so the boundary has something to be. */
+const WORKSPACE = setWorkspace(mkdtempSync(join(tmpdir(), 'loong-sandbox-')))
 
 /* ---------------------------------------------------------------------------
    The sandbox boundary.

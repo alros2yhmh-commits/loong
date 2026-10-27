@@ -22,6 +22,8 @@ import { readFile, stat } from 'node:fs/promises'
 import { tool } from 'ai'
 import { z } from 'zod'
 import { displayPath, resolveInside } from './config.ts'
+import { applyEdits } from './edits.ts'
+import { recordWrite } from './journal.ts'
 
 /** how much text one call may return, across all files */
 const DEFAULT_BUDGET = 60_000
@@ -164,13 +166,13 @@ export const searchManyTool = tool({
 
 export const editManyTool = tool({
   description:
-    'Apply SEVERAL edits in one call — use this instead of calling edit_file repeatedly. Each edit replaces the FIRST exact occurrence of `find` with `replace`. A failed edit does not stop the others; the result says which landed and which did not.',
+    'Apply SEVERAL edits in one call — use this instead of calling edit_file repeatedly. Every edit must match EXACTLY ONCE: all of them are matched and checked for overlap before anything is written, so either every edit to a file lands or none does. The result reports per file.',
   inputSchema: z.object({
     edits: z
       .array(
         z.object({
           path: z.string(),
-          find: z.string().describe('The exact text to replace (must match byte for byte).'),
+          find: z.string().describe('The exact text to replace. It must occur once in the file.'),
           replace: z.string(),
         }),
       )
@@ -189,21 +191,22 @@ export const editManyTool = tool({
     for (const [path, list] of byFile) {
       try {
         const abs = resolveInside(path)
-        let text = await rf(abs, 'utf8')
-        let applied = 0
-        for (const edit of list) {
-          const at = text.indexOf(edit.find)
-          if (at === -1) {
-            report.push(`✗ ${path}: could not find the text to replace (${edit.find.slice(0, 60)}…)`)
-            continue
-          }
-          text = text.slice(0, at) + edit.replace + text.slice(at + edit.find.length)
-          applied += 1
+        const before = await rf(abs, 'utf8')
+        const res = applyEdits(
+          before,
+          list.map((e) => ({ oldText: e.find, newText: e.replace })),
+        )
+        if (!res.ok) {
+          report.push(`✗ ${path}: ${res.error}`)
+          continue
         }
-        if (applied > 0) {
-          await wf(abs, text, 'utf8')
-          report.push(`✓ ${path}: ${applied}/${list.length} edits applied`)
-        }
+        await wf(abs, res.content, 'utf8')
+        recordWrite('write', abs, before)
+        report.push(
+          `✓ ${path}: ${res.applied} edit${res.applied === 1 ? '' : 's'} applied${
+            res.notes.length ? ` (${res.notes.join('; ')})` : ''
+          }`,
+        )
       } catch (e) {
         report.push(`✗ ${path}: ${(e as Error).message}`)
       }

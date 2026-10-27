@@ -67,7 +67,10 @@ export function Composer(p: ComposerProps) {
     }
   }, [p.value])
 
-  const canSend = p.value.trim().length > 0 && !p.running && !p.blockedReason
+  /* An attachment is content. Requiring a typed character made the file picker
+     a decoration: a screenshot or a log with no words is a legitimate ask. */
+  const hasContent = p.value.trim().length > 0 || (p.attachments?.length ?? 0) > 0
+  const canSend = hasContent && !p.running && !p.blockedReason
 
   const send = () => {
     if (!canSend) return
@@ -185,8 +188,13 @@ export function Composer(p: ComposerProps) {
                 type="button"
                 onClick={p.onPickFolder}
                 className="ctl flex min-w-0 items-center gap-[6px] rounded-[7px] px-[7px] py-[3px] t-tiny"
-                style={{ color: 'var(--text-3)' }}
-                title={p.folder ?? 'Choose a folder'}
+                style={
+                  p.folder
+                    ? { color: 'var(--text-3)' }
+                    : { color: 'var(--amber)', background: 'var(--amber-dim)' }
+                }
+                title={p.folder ? `Working in ${p.folder} — click to change` : 'Choose the folder the agent may read and write'}
+                aria-label={p.folder ? `Workspace: ${p.folder}` : 'Choose a folder'}
               >
                 <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden>
                   <path
@@ -195,8 +203,10 @@ export function Composer(p: ComposerProps) {
                     strokeWidth="1.3"
                   />
                 </svg>
-                <span className="mono max-w-[130px] truncate">
-                  {p.folder ? p.folder.split(/[\\/]/).filter(Boolean).pop() : 'folder'}
+                <span className="mono max-w-[150px] truncate">
+                  {p.folder
+                    ? p.folder.split(/[\\/]/).filter(Boolean).slice(-2).join('/')
+                    : 'open a folder'}
                 </span>
               </button>
             )}

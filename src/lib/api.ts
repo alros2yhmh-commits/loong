@@ -7,13 +7,32 @@
    whenever the document is not http.
    =========================================================================== */
 
-const API_BASE =
+export const API_BASE =
   typeof window !== 'undefined' && window.location.protocol.startsWith('http')
     ? ''
     : 'http://127.0.0.1:5274'
 
+type LoongBridge = {
+  pickWorkspace?: () => Promise<string | null>
+  openExternal?: (url: string) => void
+  token?: string
+}
+
+function bridge(): LoongBridge | undefined {
+  return typeof window !== 'undefined'
+    ? (window as unknown as { loong?: LoongBridge }).loong
+    : undefined
+}
+
+/** the session token Electron minted; empty in `npm run dev` */
+export function authHeaders(): Record<string, string> {
+  const token = bridge()?.token
+  return token ? { 'x-loong-token': token } : {}
+}
+
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(API_BASE + path, init)
+  const headers = { ...authHeaders(), ...(init?.headers as Record<string, string> | undefined) }
+  const r = await fetch(API_BASE + path, { ...init, headers })
   if (!r.ok) {
     const body = (await r.json().catch(() => null)) as { error?: string } | null
     throw new Error(body?.error ?? `${r.status} ${r.statusText}`)
@@ -115,6 +134,9 @@ export interface GitStatus {
 }
 
 export interface GitDiff {
+  ok?: boolean
+  error?: string
+  stat?: string
   diff?: string
   files?: { path: string; added: number; removed: number }[]
 }
@@ -176,6 +198,38 @@ export interface Usage {
   promptTokens: number
   completionTokens: number
   model?: string
+}
+
+export interface GraphStats {
+  files: number
+  sourceFiles: number
+  symbols: number
+  edges: number
+  cycles: number
+  languages: { lang: string; count: number }[]
+  entries: string[]
+}
+
+export interface LedgerFinding {
+  id: string
+  rule: string
+  severity: 'critical' | 'high' | 'medium' | 'low'
+  file: string
+  line: number
+  snippet: string
+  kb: string | null
+  status: 'open' | 'fixed' | 'accepted'
+  firstSeenAt: number
+  lastSeenAt: number
+  note?: string
+}
+
+export interface FindingCounts {
+  open: number
+  critical: number
+  high: number
+  fixed: number
+  accepted: number
 }
 
 export const api = {
@@ -245,6 +299,17 @@ export const api = {
   /* tools */
   tools: () => json<{ tools: ToolInfo[] }>('/api/tools'),
 
+  /* graph, findings and the security scan — the board's three reads */
+  graph: (refresh = false) =>
+    json<{ stats: GraphStats; map: string }>(`/api/graph${refresh ? '?refresh=1' : ''}`),
+  findings: () => json<{ findings: LedgerFinding[]; counts: FindingCounts }>('/api/findings'),
+  updateFinding: (id: string, status: LedgerFinding['status'], note?: string) =>
+    post<{ finding: LedgerFinding; counts: FindingCounts }>(`/api/findings/${id}`, { status, note }),
+  securityScan: () =>
+    post<{ findings: Omit<LedgerFinding, 'id' | 'status' | 'firstSeenAt' | 'lastSeenAt'>[]; counts: FindingCounts }>(
+      '/api/security/scan',
+    ),
+
   /* approvals and questions */
   approvals: () => json<{ approvals: ApprovalRequest[] }>('/api/approvals'),
   decide: (id: string, approved: boolean) =>
@@ -295,5 +360,4 @@ export const api = {
 }
 
 /** the native bridge, when the app runs inside the desktop shell */
-export const bridge = () =>
-  (window as unknown as { loong?: { pickWorkspace?: () => Promise<string | null> } }).loong
+export { bridge as loongBridge }

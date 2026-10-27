@@ -59,10 +59,11 @@ test('the memory tools are named in the agent prompt', () => {
 test('the prompt stays inside a sane budget', () => {
   /* the guard is against UNBOUNDED growth, not against growth. The prompt now
      carries two indexes it did not before — the skills available and the library
-     shelf — which are what stop the model guessing at things it could read. The
-     ceiling moved 12k -> 13k for them, and stays a ceiling. */
+     shelf — plus the peer bus and the user profile, which are what stop the model
+     guessing at things it could read or ask. The ceiling moved 12k -> 13k -> 14k
+     for them, and stays a ceiling. */
   const prompt = systemPrompt('agent')
-  assert.ok(prompt.length < 13_000, `the agent prompt grew to ${prompt.length} chars`)
+  assert.ok(prompt.length < 14_000, `the agent prompt grew to ${prompt.length} chars`)
 })
 
 test('the agent prompt carries the reference, the audit and the identity rule', () => {

@@ -84,15 +84,44 @@ function configPath(): string {
   return join(DATA_DIR, 'mcp.json')
 }
 
+/** entries dropped on load, with the reason — so the UI can say why a server
+    that is in the file never appeared. Cleared and rebuilt on every read. */
+const rejected = new Map<string, string>()
+
+export function rejectedMcpServers(): Record<string, string> {
+  return Object.fromEntries(rejected)
+}
+
 /** the servers the user configured, or an empty set */
 export function loadMcpConfig(): McpConfig {
   const file = configPath()
-  if (!existsSync(file)) return { mcpServers: {} }
+  if (!existsSync(file)) {
+    rejected.clear()
+    return { mcpServers: {} }
+  }
   try {
     const parsed = JSON.parse(readFileSync(file, 'utf8')) as Partial<McpConfig>
     const servers = parsed?.mcpServers
-    if (!servers || typeof servers !== 'object') return { mcpServers: {} }
-    return { mcpServers: servers }
+    if (!servers || typeof servers !== 'object') {
+      rejected.clear()
+      return { mcpServers: {} }
+    }
+    /* Validated here, not only on the write path. This file is the input to
+       `spawn`, and it can be edited by hand, restored from a backup, or
+       dropped in by another tool — so the check that guards the save endpoint
+       has to guard the read too. Per entry, so one bad server cannot take the
+       working ones down with it. */
+    const kept: Record<string, McpServerSpec> = {}
+    rejected.clear()
+    for (const [name, spec] of Object.entries(servers)) {
+      try {
+        assertSafeMcpConfig({ mcpServers: { [name]: spec } })
+        kept[name] = spec
+      } catch (err) {
+        rejected.set(name, (err as Error).message)
+      }
+    }
+    return { mcpServers: kept }
   } catch {
     /* a corrupt file must not stop the app — move it aside and start clean */
     try {
@@ -100,6 +129,7 @@ export function loadMcpConfig(): McpConfig {
     } catch {
       /* unreadable either way */
     }
+    rejected.clear()
     return { mcpServers: {} }
   }
 }
@@ -126,6 +156,30 @@ export function saveMcpConfig(config: McpConfig): void {
 
 const SHELL_META = /[&|<>^;`$(){}[\]\r\n"'!%]/
 
+/* `env` is spread over `process.env` for the child, so these would redirect the
+   dynamic loader, the interpreter, or the program search path — for the server
+   and for anything it spawns in turn. Values are not restricted: a token is a
+   perfectly ordinary value and the transport spawns without a shell. */
+const ENV_HIJACK = new Set([
+  'PATH',
+  'PATHEXT',
+  'COMSPEC',
+  'SHELL',
+  'SYSTEMROOT',
+  'WINDIR',
+  'NODE_OPTIONS',
+  'NODE_PATH',
+  'LD_PRELOAD',
+  'LD_LIBRARY_PATH',
+  'DYLD_INSERT_LIBRARIES',
+  'DYLD_LIBRARY_PATH',
+  'PYTHONPATH',
+  'PYTHONSTARTUP',
+  'GIT_SSH',
+  'GIT_SSH_COMMAND',
+  'SSH_AUTH_SOCK',
+])
+
 export function assertSafeMcpConfig(config: McpConfig): void {
   const servers = config?.mcpServers
   if (!servers || typeof servers !== 'object' || Array.isArray(servers)) {
@@ -147,6 +201,29 @@ export function assertSafeMcpConfig(config: McpConfig): void {
       if (!Array.isArray(spec.args) || spec.args.some((a) => typeof a !== 'string')) {
         throw new Error(`MCP server "${name}": args must be an array of strings.`)
       }
+      /* without a shell the metacharacters are inert, but a line break splits
+         the command line on Windows — the transport refuses those too */
+      if (spec.args.some((a) => /[\r\n]/.test(a))) {
+        throw new Error(`MCP server "${name}": args may not contain line breaks.`)
+      }
+    }
+    if (spec.cwd !== undefined) {
+      if (typeof spec.cwd !== 'string' || !spec.cwd.trim() || SHELL_META.test(spec.cwd)) {
+        throw new Error(`MCP server "${name}": cwd must be a plain path.`)
+      }
+    }
+    if (spec.env !== undefined) {
+      if (typeof spec.env !== 'object' || spec.env === null || Array.isArray(spec.env)) {
+        throw new Error(`MCP server "${name}": env must be an object of strings.`)
+      }
+      for (const [key, value] of Object.entries(spec.env)) {
+        if (typeof value !== 'string') {
+          throw new Error(`MCP server "${name}": env.${key} must be a string.`)
+        }
+        if (ENV_HIJACK.has(key.toUpperCase())) {
+          throw new Error(`MCP server "${name}": env.${key} may not be overridden.`)
+        }
+      }
     }
     if (spec.url !== undefined) {
       if (typeof spec.url !== 'string' || !/^https?:\/\//i.test(spec.url)) {
@@ -157,6 +234,50 @@ export function assertSafeMcpConfig(config: McpConfig): void {
       throw new Error(`MCP server "${name}" needs either a command or a url.`)
     }
   }
+}
+
+/** env values and headers are reduced to this for anything that leaves the
+    server: `integrations.ts` stores live GitHub/Notion tokens there, and the
+    renderer only needs to know that one is set. A null byte cannot collide
+    with a real secret. */
+export const MASKED = '\u0000masked'
+
+function maskRecord(rec: Record<string, string> | undefined): Record<string, string> | undefined {
+  if (!rec) return rec
+  return Object.fromEntries(Object.keys(rec).map((k) => [k, MASKED]))
+}
+
+export function maskMcpConfig(config: McpConfig): McpConfig {
+  const out: Record<string, McpServerSpec> = {}
+  for (const [name, spec] of Object.entries(config.mcpServers ?? {})) {
+    out[name] = { ...spec, env: maskRecord(spec.env), headers: maskRecord(spec.headers) }
+  }
+  return { mcpServers: out }
+}
+
+/** Put the stored secrets back wherever the client echoed the mask, so a
+    round-trip through the settings UI cannot silently erase a token. */
+export function unmaskMcpConfig(incoming: McpConfig, stored: McpConfig): McpConfig {
+  const restore = (
+    rec: Record<string, string> | undefined,
+    prev: Record<string, string> | undefined,
+  ): Record<string, string> | undefined => {
+    if (!rec) return rec
+    const before = prev ?? {}
+    return Object.fromEntries(
+      Object.entries(rec).map(([k, v]) => [k, v === MASKED ? (before[k] ?? '') : v]),
+    )
+  }
+  const out: Record<string, McpServerSpec> = {}
+  for (const [name, spec] of Object.entries(incoming.mcpServers ?? {})) {
+    const prev = stored.mcpServers?.[name]
+    out[name] = {
+      ...spec,
+      env: restore(spec.env, prev?.env),
+      headers: restore(spec.headers, prev?.headers),
+    }
+  }
+  return { mcpServers: out }
 }
 
 function transportOf(spec: McpServerSpec): 'stdio' | 'http' | 'sse' {

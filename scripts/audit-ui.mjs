@@ -115,13 +115,73 @@ const surfaces = {}
 surfaces.home = await page.evaluate(PROBE)
 await page.screenshot({ path: 'shots/audit/08-home.png' })
 
-/* settings */
-await page.locator('button[aria-label="Settings"]').first().click({ timeout: 3000 }).catch(() => {})
+/* settings — by role and name, not by an aria-label the panel does not carry */
+let settingsOpen = false
+try {
+  await page.getByRole('button', { name: 'Settings', exact: true }).first().click({ timeout: 4000 })
+  await page.locator('[role="dialog"][aria-label="Settings"]').waitFor({ state: 'visible', timeout: 4000 })
+  settingsOpen = true
+} catch (err) {
+  console.log('settings did not open:', String(err).split('\n')[0])
+}
 await sleep(1200)
 surfaces.settings = await page.evaluate(PROBE)
 await page.screenshot({ path: 'shots/audit/08-settings.png' })
 await page.keyboard.press('Escape')
 await sleep(400)
+console.log('settings open:', settingsOpen, '· closed by Escape:', (await page.locator('[role="dialog"][aria-label="Settings"]').count()) === 0)
+
+/* the Changes button — the one that used to do nothing */
+let changesOpen = false
+try {
+  await page.getByRole('button', { name: /^Changes/ }).first().click({ timeout: 4000 })
+  await page.locator('[role="dialog"][aria-label="Changes"]').waitFor({ state: 'visible', timeout: 5000 })
+  changesOpen = true
+} catch (err) {
+  console.log('changes did not open:', String(err).split('\n')[0])
+}
+await sleep(1200)
+surfaces.changes = await page.evaluate(PROBE)
+await page.screenshot({ path: 'shots/audit/08-changes.png' })
+await page.keyboard.press('Escape')
+await sleep(400)
+console.log('changes open:', changesOpen, '· closed by Escape:', (await page.locator('[role="dialog"][aria-label="Changes"]').count()) === 0)
+
+/* the Inspect panel — graph and security ledger */
+let inspectOpen = false
+try {
+  await page.getByRole('button', { name: 'Inspect', exact: true }).first().click({ timeout: 4000 })
+  await page.locator('[role="dialog"][aria-label="Inspect project"]').waitFor({ state: 'visible', timeout: 5000 })
+  inspectOpen = true
+} catch (err) {
+  console.log('inspect did not open:', String(err).split('\n')[0])
+}
+await sleep(2600)
+surfaces.inspect = await page.evaluate(PROBE)
+await page.screenshot({ path: 'shots/audit/08-inspect-graph.png' })
+try {
+  await page.getByRole('button', { name: 'Security', exact: true }).click({ timeout: 3000 })
+  await sleep(1200)
+  await page.screenshot({ path: 'shots/audit/08-inspect-security.png' })
+} catch (err) {
+  console.log('security tab did not open:', String(err).split('\n')[0])
+}
+await page.keyboard.press('Escape')
+await sleep(400)
+console.log('inspect open:', inspectOpen, '· closed by Escape:', (await page.locator('[role="dialog"][aria-label="Inspect project"]').count()) === 0)
+
+/* a slash command is app input, not a message: /help must answer in the UI */
+let slashOk = false
+try {
+  const box = page.getByRole('textbox', { name: 'Message' })
+  await box.fill('/help')
+  await box.press('Enter')
+  await page.getByText('/verify · /scan · /graph').waitFor({ state: 'visible', timeout: 4000 })
+  slashOk = true
+} catch (err) {
+  console.log('slash command did not answer:', String(err).split('\n')[0])
+}
+console.log('slash /help answered:', slashOk)
 
 /* narrow and short */
 await page.setViewportSize({ width: 900, height: 620 })

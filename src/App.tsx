@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { api, type SessionRow, type Settings } from './lib/api'
-import { useAgentStream, toHistory } from './lib/stream'
+import { useSessionStreams, toHistory } from './lib/stream'
 import { newId } from './lib/blocks'
 import { Sidebar, type Surface } from './components/Sidebar'
 import { Composer, type Mode, type Trust } from './components/Composer'
@@ -10,6 +10,7 @@ import { StatusBar } from './components/StatusBar'
 import { SettingsPanel } from './components/SettingsPanel'
 import { CommandPalette } from './components/CommandPalette'
 import { DiffPane } from './components/DiffPane'
+import { InspectPanel, type InspectTab } from './components/InspectPanel'
 import { ModeMenu } from './components/ModeMenu'
 import { ModelPicker } from './components/ModelPicker'
 
@@ -26,6 +27,16 @@ import { ModelPicker } from './components/ModelPicker'
    =========================================================================== */
 
 const SIDEBAR_KEY = 'loong.sidebar.w'
+
+/* Slash commands that do not switch a surface expand into a real prompt, so
+   the agent's own tools do the work instead of the UI guessing. */
+const PROMPT_SLASH: Record<string, string> = {
+  verify:
+    'Run this project’s verification now — its tests, typecheck and lint — and report exactly what passed and what failed. If none are configured, detect the stack and say which command would be right.',
+  scan: 'Run a security scan of this folder, then explain the most severe findings and how to fix them.',
+  explain:
+    'Explain the structure of this folder: what each top-level part does and how the parts connect. Use the graph tools rather than reading every file.',
+}
 
 function persistedWidth(): number {
   try {
@@ -53,15 +64,33 @@ export default function App() {
   const [health, setHealth] = useState<boolean | null>(null)
   const [width, setWidth] = useState(persistedWidth)
   const [resizing, setResizing] = useState(false)
-  const [runningIds, setRunningIds] = useState<string[]>([])
+  /* every session with an in-memory transcript, plus which tabs the reader has
+     arranged. Tabs are the window's arrangement; the transcript itself lives in
+     the per-session registry below, so closing a tab never stops another one. */
+  const [openTabs, setOpenTabs] = useState<string[]>([])
   const [notice, setNotice] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<File[]>([])
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [modelPicker, setModelPicker] = useState(false)
+  const [inspect, setInspect] = useState<InspectTab | null>(null)
+  /* the badge on Changes: how many files differ, so the button answers "did
+     anything actually happen?" before it is even pressed */
+  const [changedCount, setChangedCount] = useState(0)
+  const [findingSummary, setFindingSummary] = useState<{ open: number; critical: number } | null>(null)
   const dragFrom = useRef<{ x: number; w: number } | null>(null)
   const scroller = useRef<HTMLDivElement>(null)
 
-  const stream = useAgentStream()
+  const streams = useSessionStreams(activeId)
+  /* the visible slot — every reader below sees one thread, but the registry
+     keeps the others streaming */
+  const stream = {
+    blocks: streams.view.blocks,
+    running: streams.view.running,
+    phase: streams.view.phase,
+    error: streams.view.error,
+    usage: streams.view.usage,
+  }
+  const runningIds = streams.runningIds
 
   /* Home is a conversation, so it never runs a tool and never needs a folder.
      Code is the agent, and a folder is what makes a session a session. */
@@ -108,20 +137,51 @@ export default function App() {
     return () => clearInterval(t)
   }, [])
 
+  /* ---- tabs ---------------------------------------------------------------
+     A tab is an arrangement, not a run. Opening one never aborts another, and
+     closing one stops only the work that tab owns. */
+  const openTab = useCallback((id: string) => {
+    setOpenTabs((prev) => (prev.includes(id) ? prev : [...prev, id]))
+  }, [])
+
+  const newThread = useCallback(() => setActiveId(null), [])
+
+  const closeTab = useCallback(
+    (id: string) => {
+      streams.stop(id)
+      streams.drop(id)
+      const idx = openTabs.indexOf(id)
+      const next = openTabs.filter((x) => x !== id)
+      setOpenTabs(next)
+      if (activeId === id) setActiveId(next[Math.max(0, idx - 1)] ?? null)
+    },
+    [streams, openTabs, activeId],
+  )
+
   /* ---- opening a thread -------------------------------------------------- */
   const openThread = useCallback(
     async (id: string) => {
       setActiveId(id)
+      openTab(id)
+      /* a session belongs to a project: opening it opens that folder, so the
+         agent can never read the previous session's project by accident */
+      const row = sessions.find((s) => s.id === id)
+      if (row?.workspace && row.workspace !== workspace) {
+        void api
+          .setWorkspace(row.workspace)
+          .then(() => setWorkspace(row.workspace))
+          .catch(() => {})
+      }
+      /* a live transcript in this window is newer than its disk copy */
+      if (streams.loaded(id)) return
       try {
         const blocks = await api.loadBlocks(id)
-        stream.setBlocks(blocks as never)
-        const state = await api.sessionState(id)
-        setRunningIds((prev) => (state.running && !prev.includes(id) ? [...prev, id] : prev))
+        streams.setBlocks(id, blocks as never)
       } catch {
-        stream.setBlocks([])
+        streams.setBlocks(id, [])
       }
     },
-    [stream],
+    [sessions, workspace, streams, openTab],
   )
 
   /* ---- one folder picker ------------------------------------------------- */
@@ -175,7 +235,42 @@ export default function App() {
   }, [attachments])
 
   const send = useCallback(async () => {
-    const typed = input.trim()
+    const raw = input.trim()
+    const slash = /^\/([a-z-]+)\s*$/i.exec(raw)
+    /* a slash line is an instruction to the app; handled here so it never
+       becomes a user turn the model has to interpret */
+    if (slash) {
+      const name = slash[1].toLowerCase()
+      if (name === 'clear') {
+        /* a new thread, not a destroyed one: every other tab keeps its work */
+        setActiveId(null)
+        setInput('')
+        return
+      }
+      if (name === 'changes') {
+        setDiffOpen(true)
+        setInput('')
+        return
+      }
+      if (name === 'graph' || name === 'inspect') {
+        setInspect('graph')
+        setInput('')
+        return
+      }
+      if (name === 'security' || name === 'findings') {
+        setInspect('security')
+        setInput('')
+        return
+      }
+      if (name === 'help') {
+        setNotice(
+          '/verify · /scan · /graph · /changes · /security · /explain · /clear — or just type the task.',
+        )
+        setInput('')
+        return
+      }
+    }
+    const typed = slash ? (PROMPT_SLASH[slash[1].toLowerCase()] ?? raw) : raw
     const { body: attached, refused } = await readAttachments()
     const text = [typed, attached].filter(Boolean).join('\n\n')
     if (!text || !settings) return
@@ -197,24 +292,27 @@ export default function App() {
       reload()
     }
     setInput('')
-    /* the reader's turn goes into the transcript first — it is theirs, and it
-       must be visible before the agent answers */
-    stream.setBlocks([...stream.blocks, { k: 'user', id: newId(), text, at: Date.now() }])
-    setRunningIds((prev) => (id && !prev.includes(id) ? [...prev, id] : prev))
+    const initial = [...stream.blocks, { k: 'user' as const, id: newId(), text, at: Date.now() }]
+    streams.setBlocks(id, initial)
+    openTab(id)
 
+    /* the run belongs to `id` from here on. If the reader switches tabs while
+       it works, this promise still resolves into that session's slot — the
+       visible transcript is a view of the registry, not the run itself. */
     const threadId = id
-    await stream.run({
+    await streams.run({
       threadId,
       sessionId: id,
-      messages: [...toHistory(stream.blocks), { role: 'user', content: text }],
+      messages: toHistory(initial),
+      initialBlocks: initial,
       settings: { ...settings, mode: effectiveMode },
     })
 
-    setRunningIds((prev) => prev.filter((x) => x !== threadId))
-    void api.saveBlocks(threadId, stream.blocks).catch(() => {})
-    void api.renameSession(threadId, text.slice(0, 60)).catch(() => {})
+    /* an attachment-only turn has no typed text — name the thread after the file
+       instead of after its contents */
+    void api.renameSession(threadId, (typed || attachments[0]?.name || text).slice(0, 60)).catch(() => {})
     reload()
-  }, [input, settings, activeId, workspace, surface, effectiveMode, stream, reload, readAttachments])
+  }, [input, settings, activeId, workspace, surface, effectiveMode, streams, reload, readAttachments, openTab])
 
   /** retry the last run: strip any trailing failure blocks and re-run the
       same history without adding a new user turn */
@@ -230,28 +328,27 @@ export default function App() {
         break
       }
     }
+    /* drop the agent's own last answer(s) so the retry re-attempts the task
+       instead of regenerating the same text it just produced */
+    while (clean.length > 0 && clean[clean.length - 1].k === 'text') {
+      clean.pop()
+    }
     if (clean.length === 0) return
-    stream.setBlocks(clean)
-    setRunningIds((prev) => (activeId && !prev.includes(activeId) ? [...prev, activeId] : prev))
-
-    await stream.run({
-      threadId: activeId,
-      sessionId: activeId,
+    const threadId = activeId
+    streams.setBlocks(threadId, clean)
+    await streams.run({
+      threadId,
+      sessionId: threadId,
       messages: toHistory(clean),
+      initialBlocks: clean,
       settings: { ...settings, mode: effectiveMode },
     })
-
-    setRunningIds((prev) => prev.filter((x) => x !== activeId))
-    void api.saveBlocks(activeId, stream.blocks).catch(() => {})
     reload()
-  }, [settings, activeId, effectiveMode, stream, reload])
+  }, [settings, activeId, effectiveMode, streams, reload])
 
-  /* the transcript is persisted whenever it settles, not only on send */
-  useEffect(() => {
-    if (!activeId || stream.running || stream.blocks.length === 0) return
-    const t = setTimeout(() => void api.saveBlocks(activeId, stream.blocks).catch(() => {}), 400)
-    return () => clearTimeout(t)
-  }, [activeId, stream.running, stream.blocks])
+  /* Persistence lives in the stream registry now: it saves each thread under
+     its own id when that thread's run settles, so two sessions settling at once
+     cannot write over each other. */
 
   /* ---- sidebar resize ---------------------------------------------------- */
   const onResizeStart = useCallback(
@@ -291,8 +388,17 @@ export default function App() {
     const el = scroller.current
     if (!el) return
     const near = el.scrollHeight - el.scrollTop - el.clientHeight < 120
-    if (near) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+    if (near) el.scrollTo({ top: el.scrollHeight, behavior: 'auto' })
   }, [stream.blocks])
+
+  /* The scroller remounts per thread, and a fresh node starts at scrollTop 0 —
+     for a tail-windowed transcript that is its oldest visible block, not the
+     newest turn. A mount therefore lands at the bottom; the follow effect above
+     takes over from there. */
+  const attachScroller = useCallback((el: HTMLDivElement | null) => {
+    scroller.current = el
+    if (el) el.scrollTop = el.scrollHeight
+  }, [])
 
   /* ---- the plan, for the floor bar --------------------------------------- */
   const planCount = useMemo(() => {
@@ -302,6 +408,60 @@ export default function App() {
     if (!steps.length) return null
     return { done: steps.filter((s) => s.status === 'done').length, total: steps.length }
   }, [stream.blocks])
+
+  /* the last cycle phase and graph size the run reported, for the floor bar */
+  const cyclePhase = useMemo(() => {
+    for (let i = stream.blocks.length - 1; i >= 0; i--) {
+      const b = stream.blocks[i]
+      if (b.k === 'cycle') return b.phase
+    }
+    return null
+  }, [stream.blocks])
+
+  const graphFiles = useMemo(() => {
+    for (let i = stream.blocks.length - 1; i >= 0; i--) {
+      const b = stream.blocks[i]
+      if (b.k === 'graph') return b.files
+    }
+    return null
+  }, [stream.blocks])
+
+  /* ---- the ledger and change count behind the floor bar ------------------ */
+  const refreshFindings = useCallback(() => {
+    if (!workspace) {
+      setFindingSummary(null)
+      return
+    }
+    void api
+      .findings()
+      .then((r) => setFindingSummary({ open: r.counts.open, critical: r.counts.critical }))
+      .catch(() => {})
+  }, [workspace])
+
+  const refreshChanges = useCallback(() => {
+    if (!workspace) {
+      setChangedCount(0)
+      return
+    }
+    void api
+      .gitDiff()
+      .then((r) => {
+        if (r.ok !== false) setChangedCount((r.files ?? []).length)
+      })
+      .catch(() => {})
+  }, [workspace])
+
+  useEffect(() => {
+    refreshFindings()
+    refreshChanges()
+  }, [refreshFindings, refreshChanges])
+
+  /* a run writes files and can add findings: both badges are stale when it ends */
+  useEffect(() => {
+    if (stream.running) return
+    refreshFindings()
+    refreshChanges()
+  }, [stream.running, refreshFindings, refreshChanges])
 
   /* ---- keyboard ---------------------------------------------------------- */
   useEffect(() => {
@@ -314,18 +474,34 @@ export default function App() {
         e.preventDefault()
         setSidebarOpen((v) => !v)
       }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n' && !e.shiftKey) {
+        e.preventDefault()
+        newThread()
+      }
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'd') {
         e.preventDefault()
         setDiffOpen(true)
       }
-      if (e.key === 'Escape' && stream.running) stream.stop()
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'g') {
+        e.preventDefault()
+        setInspect((v) => (v ? null : 'graph'))
+      }
+      if (e.key === 'Escape' && activeId && stream.running) streams.stop(activeId)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [stream])
+  }, [stream, streams, activeId, newThread])
 
   const folderName = workspace ? (workspace.split(/[\\/]/).filter(Boolean).pop() ?? workspace) : null
-  const blockedReason = health === false ? 'agent offline' : !settings?.model ? 'no model' : null
+  const blockedReason =
+    health === false
+      ? 'agent offline'
+      : !settings?.model
+        ? 'no model'
+        : !workspace
+          ? 'choose a folder'
+          : null
+  const liveHere = Boolean(activeId && runningIds.includes(activeId) && stream.running)
 
 
   const composer = settings ? (
@@ -333,7 +509,9 @@ export default function App() {
       value={input}
       onValueChange={setInput}
       onSend={() => void send()}
-      onStop={stream.stop}
+      onStop={() => {
+        if (activeId) streams.stop(activeId)
+      }}
       running={stream.running}
       mode={effectiveMode}
       trust={settings.trust}
@@ -402,26 +580,61 @@ export default function App() {
             <span className="min-w-0 truncate t-caption" style={{ color: 'var(--text-3)' }}>
               {sessions.find((x) => x.id === activeId)?.title ?? ''}
             </span>
-            {surface === 'code' && (
-              <button
-                type="button"
-                className="ctl flex shrink-0 items-center gap-[5px] rounded-[6px] px-[8px] py-[3px] t-tiny"
-                style={{ color: 'var(--text-3)', border: '1px solid var(--line-2)' }}
-                onClick={() => setDiffOpen(true)}
-                title="Review changes in this folder — Ctrl Shift D"
-              >
-                <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden>
-                  <path
-                    d="M7 2.5l-4 5 4 5M9 2.5l4 5-4 5"
-                    stroke="currentColor"
-                    strokeWidth="1.3"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-                Changes
-              </button>
-            )}
+          </>
+        )}
+
+        {surface === 'code' && (
+          <>
+                <button
+                  type="button"
+                  className="ctl flex shrink-0 items-center gap-[5px] rounded-[6px] px-[8px] py-[3px] t-tiny"
+                  style={
+                    {
+                      color: findingSummary && findingSummary.critical > 0 ? 'var(--fail)' : 'var(--text-3)',
+                      border: '1px solid var(--line-2)',
+                      WebkitAppRegion: 'no-drag',
+                    } as React.CSSProperties
+                  }
+                  onClick={() => setInspect('graph')}
+                  title="Inspect the project — graph and security findings — Ctrl Shift G"
+                >
+                  <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden>
+                    <circle cx="7" cy="7" r="4.2" stroke="currentColor" strokeWidth="1.3" />
+                    <path d="M10.2 10.2L14 14" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+                  </svg>
+                  Inspect
+                </button>
+                <button
+                  type="button"
+                  className="ctl flex shrink-0 items-center gap-[5px] rounded-[6px] px-[8px] py-[3px] t-tiny"
+                  /* the whole strip drags the window, so every control inside it
+                     has to opt out or the click is swallowed */
+                  style={
+                    {
+                      color: 'var(--text-3)',
+                      border: '1px solid var(--line-2)',
+                      WebkitAppRegion: 'no-drag',
+                    } as React.CSSProperties
+                  }
+                  onClick={() => setDiffOpen(true)}
+                  title="Review changes in this folder — Ctrl Shift D"
+                >
+                  <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden>
+                    <path
+                      d="M7 2.5l-4 5 4 5M9 2.5l4 5-4 5"
+                      stroke="currentColor"
+                      strokeWidth="1.3"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  Changes
+                  {changedCount > 0 && (
+                    <span className="mono rounded-[4px] px-[3px] t-tiny" style={{ background: 'var(--surface)', color: 'var(--text-2)' }}>
+                      {changedCount}
+                    </span>
+                  )}
+                </button>
           </>
         )}
       </header>
@@ -436,15 +649,12 @@ export default function App() {
           width={width}
           onToggle={() => setSidebarOpen((v) => !v)}
           onSurface={(next) => {
+            /* runs keep going: leaving a surface is navigation, not a stop */
             setSurface(next)
             setActiveId(null)
-            stream.setBlocks([])
           }}
           onOpenThread={(id) => void openThread(id)}
-          onNewThread={() => {
-            setActiveId(null)
-            stream.setBlocks([])
-          }}
+          onNewThread={newThread}
           onRename={(id, title) => void api.renameSession(id, title).then(reload)}
           onDelete={(id) => setDeleteTarget(id)}
           onOpenSettings={() => setSettingsOpen(true)}
@@ -455,6 +665,83 @@ export default function App() {
         />
 
         <main className="relative flex min-w-0 flex-1 flex-col">
+          {/* Open sessions, side by side. The strip appears as soon as there is
+              more than one, and every tab keeps its own run alive underneath. */}
+          {surface === 'code' && openTabs.length > 1 && (
+            <div
+              className="flex h-[34px] shrink-0 items-stretch gap-[1px] overflow-x-auto px-[8px]"
+              style={{ borderBottom: '1px solid var(--line-1)', background: 'var(--canvas)' }}
+              role="tablist"
+              aria-label="Open sessions"
+            >
+              {openTabs.map((id) => {
+                const row = sessions.find((s) => s.id === id)
+                const title = row?.title ?? 'Thread'
+                const live = runningIds.includes(id)
+                const active = activeId === id
+                return (
+                  <div
+                    key={id}
+                    className="group flex min-w-0 shrink-0 items-center rounded-t-[7px]"
+                    style={{
+                      background: active ? 'var(--surface)' : 'transparent',
+                      boxShadow: active ? 'inset 0 -1px 0 var(--amber)' : 'none',
+                    }}
+                  >
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => void openThread(id)}
+                      title={title}
+                      className="flex min-w-0 items-center gap-[6px] px-[9px] py-[7px] t-tiny"
+                      style={{ color: active ? 'var(--text-1)' : 'var(--text-3)' }}
+                    >
+                      {live ? (
+                        <motion.span
+                          className="inline-block h-[5px] w-[5px] shrink-0 rounded-full"
+                          style={{ background: 'var(--amber)' }}
+                          animate={{ opacity: [1, 0.3, 1] }}
+                          transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
+                        />
+                      ) : (
+                        <span
+                          className="inline-block h-[5px] w-[5px] shrink-0 rounded-full"
+                          style={{ background: active ? 'var(--line-4)' : 'var(--line-3)' }}
+                        />
+                      )}
+                      <span className="max-w-[170px] truncate">{title}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => closeTab(id)}
+                      aria-label={`Close ${title}`}
+                      title="Close this tab — stops its run"
+                      className="ctl mr-[5px] grid h-[17px] w-[17px] shrink-0 place-items-center rounded-[4px] opacity-60 group-hover:opacity-100"
+                      style={{ color: 'var(--text-3)' }}
+                    >
+                      <svg width="9" height="9" viewBox="0 0 16 16" fill="none" aria-hidden>
+                        <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                      </svg>
+                    </button>
+                  </div>
+                )
+              })}
+              <button
+                type="button"
+                onClick={newThread}
+                aria-label="New session"
+                title="New session — Ctrl N"
+                className="ctl my-[6px] ml-[3px] grid h-[22px] w-[22px] shrink-0 place-items-center rounded-[6px]"
+                style={{ color: 'var(--text-3)' }}
+              >
+                <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden>
+                  <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              </button>
+            </div>
+          )}
+
           <AnimatePresence>
             {notice && (
               <motion.div
@@ -480,7 +767,11 @@ export default function App() {
           </AnimatePresence>
 
           {stream.error && (
-            <div className="px-[24px] pt-[12px]">
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="px-[24px] pt-[12px]"
+            >
               <p className="m-0 t-small" style={{ color: 'var(--text-1)' }}>
                 {stream.error}
               </p>
@@ -489,13 +780,14 @@ export default function App() {
                 className="ctl mt-[6px] rounded-[8px] px-[12px] py-[5px] t-small"
                 style={{ border: '1px solid var(--line-3)', color: 'var(--text-1)' }}
                 onClick={() => {
-                  stream.clearError()
-                  void send()
+                  streams.clearError(activeId ?? undefined)
+                  if (stream.blocks.some((b) => b.k === 'user')) void retry()
+                  else void send()
                 }}
               >
                 Retry
               </button>
-            </div>
+            </motion.div>
           )}
 
           {/* ONE composer, ONE place in the tree. Centred with the creature when
@@ -509,22 +801,40 @@ export default function App() {
                 : 'flex min-h-0 flex-1 flex-col'
             }
           >
-            {stream.blocks.length === 0 ? (
-              <EmptyState running={stream.running} />
-            ) : (
-              <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto">
-                <Transcript
-                  bare
-                  blocks={stream.blocks}
-                  view={settings?.view ?? 'normal'}
-                  running={stream.running}
-                  phase={stream.phase}
-                  onDecide={(id, approved) => void api.decide(id, approved).catch(() => {})}
-                  onAnswer={(id, answer) => void api.answer(id, answer).catch(() => {})}
-                  onRetry={() => void retry()}
-                />
-              </div>
-            )}
+            <AnimatePresence mode="wait" initial={false}>
+              {stream.blocks.length === 0 ? (
+                <motion.div
+                  key={`empty-${activeId ?? 'new'}`}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                >
+                  <EmptyState running={liveHere} onPick={setInput} />
+                </motion.div>
+              ) : (
+                <motion.div
+                  key={activeId ?? 'thread'}
+                  ref={attachScroller}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.18 }}
+                  className="min-h-0 flex-1 overflow-y-auto"
+                >
+                  <Transcript
+                    bare
+                    blocks={stream.blocks}
+                    view={settings?.view ?? 'normal'}
+                    running={liveHere}
+                    phase={stream.phase}
+                    onDecide={(id, approved) => void api.decide(id, approved).catch(() => {})}
+                    onAnswer={(id, answer) => void api.answer(id, answer).catch(() => {})}
+                    onRetry={() => void retry()}
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             <div className={stream.blocks.length === 0 ? 'w-full' : 'shrink-0 pb-[18px] pt-[10px]'}>
               {composer}
@@ -534,7 +844,7 @@ export default function App() {
       </div>
 
       <StatusBar
-        running={stream.running}
+        running={liveHere}
         phase={stream.phase}
         mode={settings?.mode ?? 'agent'}
         model={stream.usage?.model ?? settings?.model ?? ''}
@@ -542,6 +852,10 @@ export default function App() {
         workspace={workspace}
         usage={stream.usage}
         health={health}
+        cycle={cyclePhase}
+        security={findingSummary}
+        graphFiles={graphFiles}
+        onInspect={(tab) => setInspect(tab)}
       />
 
       <ModeMenu
@@ -580,14 +894,24 @@ export default function App() {
         sessions={sessions}
         activeId={activeId}
         onOpenThread={(id) => void openThread(id)}
-        onNewThread={() => {
-          setActiveId(null)
-          stream.setBlocks([])
-        }}
+        onNewThread={newThread}
         onPickFolder={pickFolder}
       />
 
-      {diffOpen && <DiffPane onClose={() => setDiffOpen(false)} />}
+      {diffOpen && (
+        <DiffPane onClose={() => setDiffOpen(false)} workspace={workspace} onCount={setChangedCount} />
+      )}
+
+      <AnimatePresence>
+        {inspect && (
+          <InspectPanel
+            tab={inspect}
+            workspace={workspace}
+            onClose={() => setInspect(null)}
+            onTab={setInspect}
+          />
+        )}
+      </AnimatePresence>
 
       <SettingsPanel
         open={settingsOpen}
@@ -639,10 +963,9 @@ export default function App() {
                     const id = deleteTarget
                     setDeleteTarget(null)
                     void api.deleteSession(id).then(() => {
-                      if (activeId === id) {
-                        setActiveId(null)
-                        stream.setBlocks([])
-                      }
+                      streams.drop(id)
+                      setOpenTabs((prev) => prev.filter((x) => x !== id))
+                      if (activeId === id) setActiveId(null)
                       reload()
                     })
                   }}

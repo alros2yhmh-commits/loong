@@ -153,12 +153,14 @@ export class ProviderError extends Error {
    --------------------------------------------------------------------------- */
 
 export const MODEL_FALLBACKS: Record<ProviderId, string[]> = {
-  /* free, tool-capable, verified October 2026 */
+  /* free, tool-capable, and answering — checked against the provider, not
+     against a blog post. A fallback that is itself 404 is worse than none: the
+     run spends its attempts discovering that the whole chain is dead. */
   openrouter: [
-    'openai/gpt-oss-20b:free',
     'poolside/laguna-s-2.1:free',
     'cohere/north-mini-code:free',
     'nvidia/nemotron-3-ultra-550b-a55b:free',
+    'nvidia/nemotron-3-super-120b-a12b:free',
   ],
   /* the one local model whose chat template actually emits tool calls */
   ollama: [],
@@ -180,15 +182,25 @@ export function callProviderOptions(cfg: ProviderConfig): Record<string, unknown
   const shared = { cacheControl: { type: 'ephemeral' } }
   switch (cfg.provider) {
     case 'openrouter':
-      /* OpenRouter's documented body field; the compatible provider forwards it */
-      return { openrouter: shared }
+      /* OpenRouter's documented body field; the compatible provider forwards it.
+         parallelToolCalls rides the openai-compatible envelope so independent
+         reads fire together instead of one-by-one. */
+      /* Entries under the provider's own name are spread straight into the
+         request body, so this one has to be spelled the way the API spells it:
+         parallel_tool_calls. The camelCase form is a typed option of the `openai`
+         provider and was ignored here — which is why independent reads went one
+         at a time on the default provider. */
+      return {
+        openrouter: { ...shared, parallel_tool_calls: true },
+        openai: { parallelToolCalls: true },
+      }
     case 'anthropic':
       return { anthropic: shared }
     case 'google':
       /* thinking makes the model deliberate instead of answering at once */
       return { google: { thinkingConfig: { thinkingBudget: 8_192 } } }
     case 'openai':
-      return { openai: { reasoningEffort: 'medium' } }
+      return { openai: { reasoningEffort: 'medium', parallelToolCalls: true } }
     default:
       return {}
   }

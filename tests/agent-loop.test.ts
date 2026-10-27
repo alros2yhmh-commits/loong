@@ -6,7 +6,13 @@ import { MockLanguageModelV4, simulateReadableStream } from 'ai/test'
 import { EventType, type BaseEvent } from '@ag-ui/core'
 import { runAgent } from '../server/agent.ts'
 import { resolveApproval, pendingApprovals } from '../server/approvals.ts'
+import { setWorkspace } from '../server/config.ts'
 import { TOOLS } from '../server/tools.ts'
+import { writeLedger } from '../server/ledger.ts'
+
+/* A run has no default root any more: it names one. These loop tests work on the
+   repository itself, so they name it explicitly. */
+setWorkspace(process.cwd())
 
 /** a test that leaves files in the workspace is a test that will confuse someone */
 const probe = (name: string) => ({
@@ -179,6 +185,7 @@ test('a tool call is emitted as START, ARGS, END and then a RESULT', async () =>
 
 test('a mutating tool parks the run until a human answers', async () => {
   const sink = collect()
+  const file = probe('APPROVAL_PROBE.txt')
   const call = [
     { type: 'stream-start', warnings: [] },
     {
@@ -225,6 +232,7 @@ test('a mutating tool parks the run until a human answers', async () => {
     sink.types().includes(EventType.TOOL_CALL_RESULT),
     'the tool did not run after approval',
   )
+  file.cleanup()
 })
 
 test('a denied tool does not run, and the model is told not to retry', async () => {
@@ -390,4 +398,259 @@ test('grep on a missing directory reports rather than throws', async () => {
   const grep = TOOLS.grep.execute!
   const out = (await grep({ pattern: 'zzz', path: 'does-not-exist' } as never, {} as never)) as string
   assert.match(out, /No matches|Refused/)
+})
+
+/* ---------------------------------------------------------------------------
+   The completion gates.
+
+   The session that motivated these: three runs in a row read the project,
+   wrote nothing, and the last one closed as "completed" with no answer at all
+   because the provider returned empty streams and the retry loop ran out.
+   --------------------------------------------------------------------------- */
+
+test('a run that only ever gets empty streams fails instead of completing', async () => {
+  const sink = collect()
+  const empty = [
+    { type: 'stream-start', warnings: [] },
+    { type: 'finish', finishReason: stop, usage },
+  ]
+
+  await runAgent({
+    runId: 'r-empty',
+    threadId: 'th-empty',
+    messages: [{ role: 'user', content: 'say something' }],
+    config: { provider: 'ollama', model: 'mock' },
+    model: model([empty]),
+    route: 'manual',
+    retryBackoffMs: [1, 1],
+    emit: sink.emit,
+  })
+
+  const stops = sink.events.filter(
+    (e) => e.type === EventType.CUSTOM && (e as unknown as { name: string }).name === 'loong.stop',
+  )
+  assert.equal(stops.length, 0, 'an empty run still reported a clean stop')
+  const failed = sink.events.find((e) => e.type === EventType.RUN_ERROR) as unknown as { message: string }
+  assert.ok(failed, 'no RUN_ERROR: the empty run looked successful')
+  assert.match(failed.message, /empty|nothing|no answer/i)
+})
+
+test('an open plan and no writes stops short, and the plan gate asks once', async () => {
+  const sink = collect()
+  const planCall = [
+    { type: 'stream-start', warnings: [] },
+    {
+      type: 'tool-call',
+      toolCallId: 'p1',
+      toolName: 'update_plan',
+      input: JSON.stringify({
+        task: 'Finish the task app',
+        steps: [{ description: 'Add the board view', status: 'pending' }],
+      }),
+    },
+    { type: 'finish', finishReason: toolCalls, usage },
+  ]
+  const lookCall = [
+    { type: 'stream-start', warnings: [] },
+    {
+      type: 'tool-call',
+      toolCallId: 'l1',
+      toolName: 'list_dir',
+      input: JSON.stringify({ path: '.' }),
+    },
+    { type: 'finish', finishReason: toolCalls, usage },
+  ]
+
+  await runAgent({
+    runId: 'r-plan-gate',
+    threadId: 'th-plan-gate',
+    messages: [{ role: 'user', content: 'اكمل' }],
+    config: { provider: 'ollama', model: 'mock' },
+    model: model([planCall, lookCall, textStream('I read the files.')]),
+    route: 'manual',
+    retryBackoffMs: [1, 1],
+    emit: sink.emit,
+  })
+
+  const gate = sink.events.find(
+    (e) =>
+      e.type === EventType.CUSTOM &&
+      (e as unknown as { name: string }).name === 'loong.notice' &&
+      /plan gate/i.test((e as unknown as { value?: { text?: string } }).value?.text ?? ''),
+  )
+  assert.ok(gate, 'the plan gate never fired')
+
+  const stopEvent = sink.events.find(
+    (e) => e.type === EventType.CUSTOM && (e as unknown as { name: string }).name === 'loong.stop',
+  ) as unknown as { value: { reason: string; openSteps?: number } }
+  assert.ok(stopEvent, 'no stop event')
+  assert.equal(stopEvent.value.reason, 'stopped-short', 'an idle reading run claimed completion')
+  assert.equal(stopEvent.value.openSteps, 1)
+})
+
+test('the next run in a thread is given the state, not the whole project again', async () => {
+  writeLedger({
+    threadId: 'th-ledger-inject',
+    task: 'Build the task app',
+    plan: {
+      task: 'Build the task app',
+      steps: [{ description: 'Add localStorage persistence', status: 'pending' }],
+      updatedAt: Date.now(),
+    },
+    files: ['src/App.tsx'],
+    writes: 1,
+    checks: 2,
+    failures: 0,
+    outcome: 'stopped-short',
+    note: 'The list view works; persistence is next.',
+  })
+
+  let seen = ''
+  const m = new MockLanguageModelV4({
+    provider: 'mock',
+    modelId: 'mock-1',
+    doStream: async (options: unknown) => {
+      seen = JSON.stringify(options)
+      return {
+        stream: simulateReadableStream({
+          chunks: textStream('Continuing with persistence.') as never[],
+          initialDelayInMs: null,
+          chunkDelayInMs: null,
+        }),
+      } as never
+    },
+  })
+
+  const sink = collect()
+  await runAgent({
+    runId: 'r-ledger',
+    threadId: 'th-ledger-inject',
+    messages: [{ role: 'user', content: 'Continuing with the task app' }],
+    config: { provider: 'ollama', model: 'mock' },
+    model: m,
+    route: 'manual',
+    retryBackoffMs: [1, 1],
+    emit: sink.emit,
+  })
+
+  assert.match(seen, /last run on this thread/)
+  assert.match(seen, /Open plan steps \(1\): 1\) Add localStorage persistence/)
+  assert.match(seen, /Files already changed last run: src\/App\.tsx/)
+})
+
+test('a continue turn cannot close while the inherited plan is still open', async () => {
+  writeLedger({
+    threadId: 'th-inherit',
+    task: 'Build the task app',
+    plan: {
+      task: 'Build the task app',
+      steps: [{ description: 'Add localStorage persistence', status: 'pending' }],
+      updatedAt: Date.now(),
+    },
+    files: [],
+    writes: 0,
+    checks: 0,
+    failures: 0,
+    outcome: 'stopped-short',
+    note: 'read only',
+  })
+
+  const lookCall = [
+    { type: 'stream-start', warnings: [] },
+    {
+      type: 'tool-call',
+      toolCallId: 'i1',
+      toolName: 'list_dir',
+      input: JSON.stringify({ path: '.' }),
+    },
+    { type: 'finish', finishReason: toolCalls, usage },
+  ]
+  const sink = collect()
+  await runAgent({
+    runId: 'r-inherit',
+    threadId: 'th-inherit',
+    messages: [{ role: 'user', content: 'اكمل' }],
+    config: { provider: 'ollama', model: 'mock' },
+    model: model([lookCall, textStream('I read the files.')]),
+    route: 'manual',
+    retryBackoffMs: [1, 1],
+    emit: sink.emit,
+  })
+
+  const gate = sink.events.find(
+    (e) =>
+      e.type === EventType.CUSTOM &&
+      (e as unknown as { name: string }).name === 'loong.notice' &&
+      /plan gate/i.test((e as unknown as { value?: { text?: string } }).value?.text ?? ''),
+  )
+  assert.ok(gate, 'the inherited plan was not enforced')
+  const stopEvent = sink.events.find(
+    (e) => e.type === EventType.CUSTOM && (e as unknown as { name: string }).name === 'loong.stop',
+  ) as unknown as { value: { reason: string } }
+  assert.equal(stopEvent?.value.reason, 'stopped-short')
+})
+
+/* ---------------------------------------------------------------------------
+   The phase the model is told it is in.
+
+   A system string is built once per stream. Before this test the phase block
+   lived in it, so a twelve-step run read "Phase: intake, step 0, do not write
+   anything yet" on every step — and the model, obeying, only read. The phase
+   now goes through prepareStep, and this test pins that.
+   --------------------------------------------------------------------------- */
+
+const readCall = (id: string) => [
+  { type: 'stream-start', warnings: [] },
+  { type: 'tool-call', toolCallId: id, toolName: 'list_dir', input: JSON.stringify({ path: '.' }) },
+  { type: 'finish', finishReason: toolCalls, usage },
+]
+
+test('the phase block is rebuilt for every step instead of frozen at intake', async () => {
+  const sink = collect()
+  const systems: string[] = []
+  const parts = [readCall('r1'), readCall('r2'), readCall('r3'), textStream('Read it.')]
+  let call = 0
+  const recorder = new MockLanguageModelV4({
+    provider: 'mock',
+    modelId: 'mock-1',
+    doStream: async (options: unknown) => {
+      const prompt = (options as { prompt?: { role?: string; content?: unknown }[] }).prompt ?? []
+      const sys = prompt.find((m) => m.role === 'system')
+      const content = sys?.content
+      systems.push(
+        typeof content === 'string'
+          ? content
+          : Array.isArray(content)
+            ? (content as { text?: string }[]).map((p) => p.text ?? '').join('')
+            : '',
+      )
+      const chunk = parts[Math.min(call, parts.length - 1)] as never[]
+      call += 1
+      return {
+        stream: simulateReadableStream({ chunks: chunk, initialDelayInMs: null, chunkDelayInMs: null }),
+      } as never
+    },
+  })
+
+  await runAgent({
+    runId: 'r-phase',
+    threadId: 'th-phase',
+    messages: [{ role: 'user', content: 'look at this project' }],
+    config: { provider: 'ollama', model: 'mock' },
+    model: recorder,
+    emit: sink.emit,
+  })
+
+  assert.ok(systems.length >= 4, `expected at least 4 model calls, saw ${systems.length}`)
+  /* the first step is intake — the phase is allowed to say "do not write yet" */
+  assert.match(systems[0], /Phase: intake/)
+  assert.match(systems[0], /step 0/)
+  /* the fourth step has read three times: the phase must have moved with it */
+  assert.match(systems[3], /Phase: plan/)
+  assert.match(systems[3], /step 3 · 3 read\(s\)/)
+  assert.doesNotMatch(
+    systems[3],
+    /Do not write anything yet/,
+    'a later step still carried the intake instruction — the phase block is frozen',
+  )
 })

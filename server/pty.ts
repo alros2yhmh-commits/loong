@@ -198,8 +198,13 @@ export function createTerminalTool(runId: string, autoApprove = false) {
         return drain(session) || `(no output)${idleNote(session)}`
       }
 
-      /* read */
-      const session = ensure(runId)
+      /* read — never spawns. A nominally read-only action that starts a live
+         shell would be an ungated process start, and there is nothing to read
+         from a session that was never created. */
+      const session = sessions.get(runId)
+      if (!session || session.exited) {
+        return '(no live shell for this run. Use action=run to start one.)'
+      }
       await sleep(Math.min(wait, 800))
       return drain(session) || `(nothing new)${idleNote(session)}`
     },

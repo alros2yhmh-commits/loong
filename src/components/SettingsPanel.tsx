@@ -63,6 +63,19 @@ export function SettingsPanel({
     void api.keys().then((r) => setKeys(r.keys ?? {})).catch(() => {})
   }, [open, settings.provider])
 
+  /* Escape is the way out of every surface in this app; the panel was the one
+     that did not listen, so a keyboard user was trapped until they found Close */
+  const panel = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    panel.current?.focus()
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+
   if (!open) return null
 
   const saveKey = async (id: string) => {
@@ -98,6 +111,11 @@ export function SettingsPanel({
       onMouseDown={onClose}
     >
       <motion.div
+        ref={panel}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Settings"
+        tabIndex={-1}
         initial={{ opacity: 0, y: 10, scale: 0.99 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 6, transition: { duration: 0.2, ease: 'easeIn' } }}
@@ -328,7 +346,7 @@ export function SettingsPanel({
                       One brain, real tools, an interface built to be read.
                     </p>
                     <Row label="Version">
-                      <span className="mono t-small">1.0.0</span>
+                      <span className="mono t-small">{__APP_VERSION__}</span>
                     </Row>
                     <Row label="Built by">
                       <span className="t-small">Professor Hamza Mahmoud Ramadan</span>
@@ -343,7 +361,7 @@ export function SettingsPanel({
         <div className="rule-engraved" />
         <footer className="px-[20px] py-[10px]">
           <p className="mono m-0 t-tiny" style={{ color: 'var(--text-4)' }}>
-            Loong 1.0.0 · built by Professor Hamza Mahmoud Ramadan
+            Loong {__APP_VERSION__} · built by Professor Hamza Mahmoud Ramadan
           </p>
         </footer>
       </motion.div>

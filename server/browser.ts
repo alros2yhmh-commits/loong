@@ -142,6 +142,9 @@ export interface BrowserResult {
 export async function browserAction(
   action: 'open' | 'snapshot' | 'screenshot' | 'click' | 'type' | 'evaluate' | 'close',
   arg: string,
+  /** headers every request from this page carries — an API behind a bearer
+      token could not be opened at all before this */
+  headers?: Record<string, string>,
 ): Promise<BrowserResult> {
   if (action === 'close') {
     await closeBrowser()
@@ -153,6 +156,13 @@ export async function browserAction(
   if (action === 'open') {
     let url = arg.trim()
     if (!/^https?:\/\//i.test(url)) url = `http://${url}`
+    /* headers are set on the context, before the first request leaves — a page
+       that needs a token is otherwise just a 401 with no way to answer it */
+    if (headers && Object.keys(headers).length > 0) {
+      await p.context().setExtraHTTPHeaders(headers)
+    } else {
+      await p.context().setExtraHTTPHeaders({})
+    }
     await p.goto(url, { waitUntil: 'domcontentloaded', timeout: 20_000 }).catch((err) => {
       throw new Error(`Could not load ${url}: ${(err as Error).message.split('\n')[0]}`)
     })

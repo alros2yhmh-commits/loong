@@ -28,6 +28,10 @@
   --overlay: #2c2c32;
   --selected: #32323a;
   --hover: #2a2a30;
+  /* the row that is currently chosen, in a list or a palette */
+  --surface-selected: var(--selected);
+  /* the wash between a dialog and the window behind it */
+  --scrim: rgba(0, 0, 0, 0.5);
 
   /* ---- ink: 15.8 · 8.4 · 5.2 · 3.9 ------------------------------------- */
   --text-1: #f4f4f2; /* 16.1:1 on --surface */
@@ -60,16 +64,19 @@
   --btn-ghost-hover: rgba(255, 255, 255, 0.1);
   --btn-disabled: rgba(255, 255, 255, 0.12);
   --btn-disabled-text: #6b6b68;
+  /* the one filled button in a view: light on dark, so it reads as the answer */
+  --btn-primary: var(--btn);
+  --btn-primary-text: var(--btn-text);
 
   /* ---- depth: three shadows, all "closer to the glass" ------------------ */
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.45);
   --shadow-3: 0 18px 48px rgba(0, 0, 0, 0.55);
+  /* a surface that is above the window, not part of it */
+  --shadow-modal: 0 4px 8px rgba(0, 0, 0, 0.35), 0 12px 28px -2px rgba(0, 0, 0, 0.45);
 
   /* ---- geometry --------------------------------------------------------- */
   --titlebar-h: 38px;
-  /* the width Windows reserves for min / max / close */
-  --window-controls: 138px;
   /* the width Windows reserves for min / max / close */
   --window-controls: 138px;
   --statusbar-h: 30px;
@@ -118,18 +125,23 @@
   background-size: var(--dot-size) var(--dot-size);
 }
 
-/* A micro-grain over the whole window. */
+/* A micro-grain over the whole window.
+
+   Painted with plain alpha and NO mix-blend-mode. The packaged app runs with
+   hardware acceleration disabled (electron/main.cjs), and a blend mode with no
+   GPU composites to nothing — so the grain was invisible in exactly the build
+   that ships, while looking right in a dev window that had a compositor. Alpha
+   is duller, but it is actually there on every machine. */
 .grain {
   position: absolute;
   inset: 0;
   pointer-events: none;
   z-index: 1;
-  opacity: var(--grain);
+  opacity: 1;
   background-image: repeating-conic-gradient(
     from 0deg at 50% 50%,
-    rgba(255, 255, 255, 0.9) 0deg 0.6deg,
+    rgba(255, 255, 255, 0.05) 0deg 0.6deg,
     transparent 0.6deg 1.4deg
   );
   background-size: 3px 3px;
-  mix-blend-mode: overlay;
 }

@@ -20,6 +20,13 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 const storage = new AsyncLocalStorage<string>()
 let fallback: string | null = null
 
+/* The session behind the run. Two things need it: the agent bus (who is
+   speaking, who may be addressed) and the digest store (which thread this work
+   belongs to). It rides the same async context as the run id for the same
+   reason — concurrent sessions must not read each other's identity. */
+const sessions = new AsyncLocalStorage<string>()
+let fallbackSession: string | null = null
+
 export function setCurrentRun(runId: string | null): void {
   fallback = runId
 }
@@ -31,4 +38,17 @@ export function currentRunId(): string | null {
 /** run a function with a run id attached to everything it awaits */
 export function runWithRunId<T>(runId: string, fn: () => T): T {
   return storage.run(runId, fn)
+}
+
+export function setCurrentSession(sessionId: string | null): void {
+  fallbackSession = sessionId
+}
+
+export function currentSessionId(): string | null {
+  return sessions.getStore() ?? fallbackSession
+}
+
+/** run a function with a session id attached to everything it awaits */
+export function sessionWithId<T>(sessionId: string, fn: () => T): T {
+  return sessions.run(sessionId, fn)
 }

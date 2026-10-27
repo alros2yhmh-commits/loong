@@ -51,6 +51,17 @@ code, pre, kbd, .mono {
 .bidi { unicode-bidi: plaintext; }
 .bidi code, .bidi .mono { font-size: 0.94em; letter-spacing: 0; }
 
+/* Arabic needs more room than Latin at the same nominal size: the script's
+   ascenders and descenders are longer, and a 20px line on 13.5px type makes a
+   paragraph read as a wall. `:dir()` matches the *resolved* direction of a
+   `dir="auto"` block, which is what the transcript uses — an attribute
+   selector would never fire. */
+.bidi:dir(rtl) {
+  font-size: 1.04em;
+  line-height: 1.78;
+  letter-spacing: 0;
+}
+
 ::selection {
   background: rgba(217, 164, 65, 0.28);
 }
@@ -108,6 +119,10 @@ input, textarea, button {
   font: inherit;
   color: inherit;
 }
+
+/* A native range painted its filled track in Chromium's default blue — the one
+   colour in the window that belonged to no token. The accent is the dragon's. */
+:root { accent-color: var(--amber); }
 
 /* ---- the switch ---------------------------------------------------------- */
 .switch {
@@ -170,7 +185,7 @@ input, textarea, button {
 .md img, .md table { max-width: 100%; }
 .md p { margin: 0 0 12px; }
 .md h1, .md h2, .md h3, .md h4 { margin: 20px 0 8px; color: var(--text-1); }
-.md ul, .md ol { margin: 0 0 12px; padding-left: 20px; }
+.md ul, .md ol { margin: 0 0 12px; padding-inline-start: 20px; }
 .md li { margin: 3px 0; }
 .md a { color: var(--amber); text-decoration: none; border-bottom: 1px solid var(--amber-line); }
 .md code {
@@ -191,12 +206,13 @@ input, textarea, button {
 .md pre code { background: none; padding: 0; }
 .md blockquote {
   margin: 0 0 12px;
-  padding: 2px 0 2px 12px;
-  border-left: 2px solid var(--line-3);
+  padding-block: 2px;
+  padding-inline: 12px 0;
+  border-inline-start: 2px solid var(--line-3);
   color: var(--text-2);
 }
 .md table { border-collapse: collapse; margin: 0 0 12px; }
-.md th, .md td { border: 1px solid var(--line-1); padding: 5px 9px; text-align: left; }
+.md th, .md td { border: 1px solid var(--line-1); padding: 5px 9px; text-align: start; }
 .md hr { border: none; border-top: 1px solid var(--line-1); margin: 18px 0; }
 
 /* ---- the caret, the shimmer, the live dot -------------------------------- */
@@ -208,7 +224,7 @@ input, textarea, button {
   display: inline-block;
   width: 2px;
   height: 14px;
-  margin-left: 1px;
+  margin-inline-start: 1px;
   vertical-align: -2px;
   background: var(--amber);
   animation: caret 1.05s steps(1) infinite;
@@ -269,11 +285,27 @@ input, textarea, button {
   animation: drift 26s linear infinite;
 }
 
-/* The grain lives above the content as a faint overlay. pointer-events:none so
-   it never steals a click; z-index keeps it over the transcript but under
-   popovers (which use z-50+). */
+/* The grain lives above the canvas as a faint overlay. position:absolute +
+   inset:0 make it actually cover the shell (without them it collapses to zero
+   height and is invisible); pointer-events:none so it never steals a click;
+   z-index keeps it over the canvas but under popovers (which use z-50+). */
+/* The alpha lives in the pattern itself (tokens.css), so the grain needs no
+   blend mode: with no GPU compositor a blend mode renders as nothing. */
 .grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 1;
   animation: grainShift 1.4s steps(3) infinite;
+}
+
+/* While the model is still writing, the transcript shows the raw token stream
+   without a full markdown re-parse (that is what made it choppy). A soft fade-in
+   on mount gives the text a sense of flow rather than a hard pop. */
+@keyframes fadeIn { from { opacity: 0.35; } to { opacity: 1; } }
+.streaming-prose {
+  animation: fadeIn 0.22s ease both;
 }
 
 /* ---- reduced motion ------------------------------------------------------

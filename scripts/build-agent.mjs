@@ -21,6 +21,7 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -37,6 +38,20 @@ const bidiStub = {
   },
 }
 
+/* Cline's runtime links Langfuse and the OpenTelemetry node SDK, and the
+   versions in the tree disagree about the API — bundling them fails on an
+   export that does not exist. Loong never enables vendor telemetry, so the
+   whole family resolves to one stub that throws if it is ever constructed. */
+const telemetryStub = {
+  name: 'telemetry-stub',
+  setup(pluginBuild) {
+    pluginBuild.onResolve(
+      { filter: /^@langfuse(\/|$)|^@opentelemetry\/(sdk-trace-node|sdk-trace-base|context-async-hooks|core|exporter-|otlp-)/ },
+      () => ({ path: join(root, 'server', 'stubs', 'telemetry.ts') }),
+    )
+  },
+}
+
 await build({
   entryPoints: [join(root, 'server', 'start.ts')],
   bundle: true,
@@ -44,7 +59,7 @@ await build({
   format: 'cjs',
   outfile: join(root, 'dist-agent', 'loong-agent.cjs'),
   external: ['node-pty', 'better-sqlite3', 'node:*'],
-  plugins: [bidiStub],
+  plugins: [bidiStub, telemetryStub],
   logLevel: 'info',
 })
 
@@ -69,6 +84,29 @@ writeFileSync(
   'utf8',
 )
 console.log('[loong] playwright identity file copied to dist-agent/')
+
+/* The agent's own identity travels beside the bundle: the sidecar cannot read
+   the app's package.json once electron-builder has packed resources, and the
+   package.json it does find there is playwright's. */
+const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+writeFileSync(
+  join(root, 'dist-agent', 'identity.json'),
+  JSON.stringify(
+    {
+      name: manifest.name,
+      version: manifest.version,
+      author: manifest.author,
+      description: manifest.description,
+    },
+    null,
+    2,
+  ),
+  'utf8',
+)
+console.log('[loong] identity manifest written to dist-agent/identity.json')
+
+/* The agent bundle is Loong's own code: no vendored runtime, so there is no
+   third-party loop to attribute and no license file to carry beside it. */
 
 /* node-pty is external in the bundle (a native module cannot be bundled), so
    its runtime has to travel next to it. Only what it actually loads is copied:

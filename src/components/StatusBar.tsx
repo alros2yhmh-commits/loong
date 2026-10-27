@@ -18,6 +18,14 @@ export interface StatusBarProps {
   workspace: string | null
   usage: { promptTokens: number; completionTokens: number; model?: string } | null
   health: boolean | null
+  /** the deterministic cycle phase of the live/parked run */
+  cycle?: string | null
+  /** the findings ledger for this workspace */
+  security?: { open: number; critical: number } | null
+  /** how many files the graph indexed, when a graph exists */
+  graphFiles?: number | null
+  /** open the inspect panel on a tab — the floor chips are shortcuts */
+  onInspect?: (tab: 'graph' | 'security') => void
 }
 
 const PHASE_WORD: Record<string, string> = {
@@ -70,6 +78,41 @@ export function StatusBar(p: StatusBarProps) {
         <span className="t-tiny" style={{ color: 'var(--text-2)' }}>
           plan {p.plan.done}/{p.plan.total}
         </span>
+      )}
+
+      {p.cycle && (
+        <span className="mono t-tiny" style={{ color: p.running ? 'var(--text-2)' : 'var(--text-3)' }}>
+          {p.cycle}
+        </span>
+      )}
+
+      {typeof p.graphFiles === 'number' && p.graphFiles > 0 && (
+        <button
+          type="button"
+          disabled={!p.onInspect}
+          onClick={() => p.onInspect?.('graph')}
+          className="ctl rounded-[5px] px-[4px] py-[1px] t-tiny"
+          style={{ color: 'var(--text-3)', border: '1px solid transparent' }}
+          title="Open the project graph"
+        >
+          {p.graphFiles} indexed
+        </button>
+      )}
+
+      {p.security && p.security.open > 0 && (
+        <button
+          type="button"
+          disabled={!p.onInspect}
+          onClick={() => p.onInspect?.('security')}
+          className="ctl rounded-[5px] px-[4px] py-[1px] t-tiny"
+          style={{
+            color: p.security.critical > 0 ? 'var(--fail)' : 'var(--amber)',
+            border: '1px solid transparent',
+          }}
+          title="Open the security ledger"
+        >
+          {p.security.critical > 0 ? `${p.security.critical} critical` : `${p.security.open} finding${p.security.open === 1 ? '' : 's'}`}
+        </button>
       )}
 
       <span className="flex-1" />

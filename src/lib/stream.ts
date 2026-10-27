@@ -1,78 +1,176 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, type Settings, type Usage } from './api'
-import { fold, type AgentEvent, type Block } from './blocks'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { api, API_BASE, authHeaders, type Settings } from './api'
+import { fold, toAgentHistory, type AgentEvent, type Block } from './blocks'
 
 /* ===========================================================================
    The one place the interface consumes a stream.
 
    EventSource cannot POST, and the run needs a body — so this is a hand-rolled
    reader over fetch: it opens the stream, splits on the SSE frame boundary, and
-   folds each event into the block list. One timer in flight; StrictMode
-   double-mounts effects, and two readers on one run is how a transcript gets
-   every message twice.
+   folds each event into that thread's block list.
+
+   It used to hold ONE run. Opening another thread aborted the first, which
+   meant a long job stopped the moment the reader looked at something else.
+   State is now keyed by thread id: every session has its own controller, its
+   own generation counter, its own blocks and its own usage. Switching tabs is
+   a change of which slot is displayed, not a cancellation — the server already
+   runs each run in its own async context, so nothing below this layer needed
+   to change.
+
+   The generation counter still does its original job: a superseded fold is
+   dropped, so a retried run never appends to the transcript of the run it
+   replaced.
    =========================================================================== */
 
-export interface RunHandle {
+export interface RunResult {
+  /** false when this run was superseded by another run on the same thread */
+  completed: boolean
   blocks: Block[]
-  running: boolean
-  phase: 'idle' | 'thinking' | 'streaming' | 'tool' | 'waiting'
-  error: string | null
-  usage: Usage | null
-  /** start a run; the messages are the conversation in wire form */
-  run: (body: {
-    threadId: string
-    sessionId?: string
-    messages: { role: string; content: string }[]
-    settings: Settings
-    capabilities?: Record<string, unknown>
-  }) => Promise<void>
-  stop: () => void
-  /** set the blocks without a run — restoring a saved transcript */
-  setBlocks: (b: Block[]) => void
-  clearError: () => void
 }
 
-export function useAgentStream(): RunHandle {
-  const [blocks, setBlocks] = useState<Block[]>([])
-  const [running, setRunning] = useState(false)
-  const [phase, setPhase] = useState<RunHandle['phase']>('idle')
-  const [error, setError] = useState<string | null>(null)
-  const [usage, setUsage] = useState<Usage | null>(null)
-  const abort = useRef<AbortController | null>(null)
+export type RunPhase = 'idle' | 'thinking' | 'streaming' | 'tool' | 'waiting'
 
-  const stop = useCallback(() => {
-    abort.current?.abort()
-    abort.current = null
-    setRunning(false)
-    setPhase('idle')
+export type StreamUsage = {
+  promptTokens: number
+  completionTokens: number
+  model?: string
+}
+
+export interface SessionView {
+  blocks: Block[]
+  running: boolean
+  phase: RunPhase
+  error: string | null
+  usage: StreamUsage | null
+}
+
+export interface RunBody {
+  threadId: string
+  sessionId?: string
+  messages: { role: string; content: string }[]
+  settings: Settings
+  capabilities?: Record<string, unknown>
+  initialBlocks: Block[]
+}
+
+export interface StreamsHandle {
+  /** the slot for the visible thread; an empty view when nothing is open */
+  view: SessionView
+  /** every thread this window holds state for — live or merely loaded */
+  slots: string[]
+  /** threads with a run in flight right now, in any tab */
+  runningIds: string[]
+  /** true when this thread already has an in-memory transcript */
+  loaded: (threadId: string) => boolean
+  run: (body: RunBody) => Promise<RunResult>
+  stop: (threadId: string) => void
+  setBlocks: (threadId: string, blocks: Block[]) => void
+  clearError: (threadId?: string) => void
+  /** forget a thread entirely — used when it is deleted or its tab is closed */
+  drop: (threadId: string) => void
+}
+
+const EMPTY: SessionView = {
+  blocks: [],
+  running: false,
+  phase: 'idle',
+  error: null,
+  usage: null,
+}
+
+export function useSessionStreams(activeId: string | null): StreamsHandle {
+  const [views, setViews] = useState<Record<string, SessionView>>({})
+  const controllers = useRef<Record<string, AbortController>>({})
+  const generations = useRef<Record<string, number>>({})
+  const alive = useRef(true)
+  /* the newest blocks per thread, readable from callbacks that must not wait
+     for a render — Stop has to persist what is on screen right now */
+  const latest = useRef<Record<string, SessionView>>({})
+
+  useEffect(() => {
+    latest.current = views
+  }, [views])
+
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      /* unmount tears the window down; a run cannot outlive its reader */
+      alive.current = false
+      for (const c of Object.values(controllers.current)) c.abort()
+    }
+  }, [])
+
+  const patch = useCallback((id: string, next: Partial<SessionView>) => {
+    if (!alive.current) return
+    setViews((prev) => {
+      const base = prev[id] ?? EMPTY
+      return { ...prev, [id]: { ...base, ...next } }
+    })
+  }, [])
+
+  const stop = useCallback((id: string) => {
+    /* bump the generation first: the reader's finally block must not resurrect
+       the running flag it is about to clear */
+    generations.current[id] = (generations.current[id] ?? 0) + 1
+    controllers.current[id]?.abort()
+    delete controllers.current[id]
+    const blocks = latest.current[id]?.blocks
+    if (blocks?.length) void api.saveBlocks(id, blocks).catch(() => {})
+    setViews((prev) =>
+      prev[id] ? { ...prev, [id]: { ...prev[id], running: false, phase: 'idle' } } : prev,
+    )
+  }, [])
+
+  const drop = useCallback((id: string) => {
+    generations.current[id] = (generations.current[id] ?? 0) + 1
+    controllers.current[id]?.abort()
+    delete controllers.current[id]
+    setViews((prev) => {
+      if (!(id in prev)) return prev
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
   }, [])
 
   const run = useCallback(
-    async (body: {
-      threadId: string
-      sessionId?: string
-      messages: { role: string; content: string }[]
-      settings: Settings
-      capabilities?: Record<string, unknown>
-    }) => {
-      abort.current?.abort()
+    async (body: RunBody): Promise<RunResult> => {
+      const id = body.threadId
+      /* a second send on the same thread replaces the first, deliberately */
+      controllers.current[id]?.abort()
+      const my = (generations.current[id] = (generations.current[id] ?? 0) + 1)
       const ac = new AbortController()
-      abort.current = ac
-      setRunning(true)
-      setPhase('thinking')
-      setError(null)
+      controllers.current[id] = ac
+      let collected = body.initialBlocks
+      let phase: RunPhase = 'thinking'
+
+      setViews((prev) => ({
+        ...prev,
+        [id]: {
+          blocks: body.initialBlocks,
+          running: true,
+          phase: 'thinking',
+          error: null,
+          usage: prev[id]?.usage ?? null,
+        },
+      }))
+
+      const stillMine = () => generations.current[id] === my && alive.current
 
       try {
-        const res = await fetch('http://127.0.0.1:5274/api/agent', {
+        const res = await fetch(`${API_BASE || 'http://127.0.0.1:5274'}/api/agent`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: { 'content-type': 'application/json', ...authHeaders() },
           body: JSON.stringify({
             threadId: body.threadId,
             sessionId: body.sessionId,
             messages: body.messages,
+            history: toAgentHistory(body.initialBlocks),
             mode: body.settings.mode,
             trust: body.settings.trust,
+            route: body.settings.route,
             config: { provider: body.settings.provider, model: body.settings.model },
+            userName: body.settings.userName,
             capabilities: body.capabilities,
           }),
           signal: ac.signal,
@@ -90,9 +188,9 @@ export function useAgentStream(): RunHandle {
         for (;;) {
           const { done, value } = await reader.read()
           if (done) break
+          if (!stillMine()) break
           buffer += decoder.decode(value, { stream: true })
 
-          /* an SSE frame ends with a blank line */
           let cut = buffer.indexOf('\n\n')
           while (cut >= 0) {
             const frame = buffer.slice(0, cut)
@@ -105,13 +203,21 @@ export function useAgentStream(): RunHandle {
             if (data && data !== '[DONE]') {
               try {
                 const e = JSON.parse(data) as AgentEvent
-                if (e.type === 'TEXT_MESSAGE_CONTENT') setPhase('streaming')
-                if (e.type === 'TOOL_CALL_START') setPhase('tool')
-                if (e.type === 'CUSTOM' && e.name === 'loong.approval_requested') setPhase('waiting')
-                if (e.type === 'CUSTOM' && e.name === 'loong.approval_resolved') setPhase('tool')
-                setBlocks((prev) => fold(prev, e))
-                const u = (e as unknown as { usage?: Usage }).usage
-                if (u) setUsage(u)
+                if (!stillMine()) break
+                if (e.type === 'TEXT_MESSAGE_CONTENT') phase = 'streaming'
+                if (e.type === 'TOOL_CALL_START') phase = 'tool'
+                if (e.type === 'CUSTOM' && e.name === 'loong.approval_requested') phase = 'waiting'
+                if (e.type === 'CUSTOM' && e.name === 'loong.approval_resolved') phase = 'tool'
+                collected = fold(collected, e)
+                const u = (e as unknown as { usage?: StreamUsage }).usage
+                const view: SessionView = {
+                  blocks: collected,
+                  running: true,
+                  phase,
+                  error: null,
+                  usage: u ?? null,
+                }
+                setViews((prev) => ({ ...prev, [id]: { ...view, usage: u ?? prev[id]?.usage ?? null } }))
               } catch {
                 /* a frame that is not JSON is a comment or a keep-alive */
               }
@@ -122,30 +228,65 @@ export function useAgentStream(): RunHandle {
       } catch (err) {
         if ((err as Error).name === 'AbortError') {
           /* stopped on purpose — not an error */
-        } else {
-          setError((err as Error).message)
+        } else if (stillMine()) {
+          patch(id, { error: (err as Error).message })
         }
       } finally {
-        setRunning(false)
-        setPhase('idle')
-        abort.current = null
+        /* only clear the slot if it is still THIS run's controller: a retry may
+           have already replaced it, and deleting that one would make Stop mute */
+        if (controllers.current[id] === ac) delete controllers.current[id]
+        if (stillMine()) {
+          patch(id, { running: false, phase: 'idle' })
+          /* one write when the run settles, not one per token: a 5,000-block
+             transcript rewritten on every delta is a disk-bound interface */
+          void api.saveBlocks(id, collected).catch(() => {})
+        }
       }
+      return { completed: stillMine(), blocks: collected }
     },
-    [],
+    [patch],
   )
 
-  useEffect(() => () => abort.current?.abort(), [])
+  const setBlocks = useCallback((id: string, blocks: Block[]) => {
+    if (!alive.current) return
+    setViews((prev) => {
+      const base = prev[id] ?? EMPTY
+      /* a loaded transcript is not a run: keep the live flags if one is in
+         flight, because the disk copy is older than the stream */
+      return { ...prev, [id]: { ...base, blocks } }
+    })
+  }, [])
+
+  const clearError = useCallback((id?: string) => {
+    if (!id) {
+      setViews((prev) => {
+        const next: Record<string, SessionView> = {}
+        for (const [k, v] of Object.entries(prev)) next[k] = v.error ? { ...v, error: null } : v
+        return next
+      })
+      return
+    }
+    setViews((prev) => (prev[id] ? { ...prev, [id]: { ...prev[id], error: null } } : prev))
+  }, [])
+
+  const view = (activeId ? views[activeId] : undefined) ?? EMPTY
+  const slots = useMemo(() => Object.keys(views), [views])
+  const runningIds = useMemo(
+    () => Object.entries(views).filter(([, v]) => v.running).map(([id]) => id),
+    [views],
+  )
+  const loaded = useCallback((id: string) => id in views, [views])
 
   return {
-    blocks,
-    running,
-    phase,
-    error,
-    usage,
+    view,
+    slots,
+    runningIds,
+    loaded,
     run,
     stop,
     setBlocks,
-    clearError: () => setError(null),
+    clearError,
+    drop,
   }
 }
 

@@ -1,6 +1,7 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { homedir } from 'node:os'
-import { isAbsolute, join, relative, resolve, dirname, basename } from 'node:path'
-import { realpathSync } from 'node:fs'
+import { isAbsolute, join, relative, resolve, dirname, basename, sep } from 'node:path'
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 
 /* ---------------------------------------------------------------------------
    Runtime configuration.
@@ -31,11 +32,61 @@ export const PORT = Number(process.env.LOONG_PORT ?? 5274)
  */
 export const HOST = process.env.LOONG_HOST ?? '127.0.0.1'
 
-let workspaceRoot = resolve(process.env.LOONG_WORKSPACE ?? process.cwd())
+/* NO default folder. A missing workspace used to fall back to `process.cwd()`,
+   and the packaged app launched the sidecar with the user's whole home folder.
+   That turned the boundary into the house instead of the room: a model asked to
+   read "the folder I opened" happily read `Desktop/<project>/.agent-collab` and
+   the agent's own source, because every one of them was inside the jail. The
+   root is now chosen or there is no root, and `resolveInside` refuses. */
+let workspaceRoot: string | null = process.env.LOONG_WORKSPACE
+  ? resolve(process.env.LOONG_WORKSPACE)
+  : null
+
+/* A run carries its own root. Stored on the async context for the same reason
+   the run id is: two threads on two different projects must not share one
+   mutable boundary, and opening an old session must not inherit the folder the
+   new one is pointed at. */
+const runRoot = new AsyncLocalStorage<string>()
+
+/** true when a folder has been chosen — file tools require it */
+export function haveWorkspace(): boolean {
+  return (runRoot.getStore() ?? workspaceRoot) !== null
+}
 
 /** the folder the agent may read and write, right now */
 export function getWorkspace(): string {
-  return workspaceRoot
+  return runRoot.getStore() ?? workspaceRoot ?? process.cwd()
+}
+
+/**
+ * Run everything this function awaits with a fixed root.
+ *
+ * Tool execution, leases, journal entries and hooks all resolve their paths
+ * inside it, so a concurrent run on another project cannot observe or move it.
+ */
+export function withRunWorkspace<T>(root: string, fn: () => T): T {
+  const abs = resolve(String(root ?? ''))
+  if (!isAbsolute(abs)) throw new WorkspaceViolation(String(root ?? ''))
+  return runRoot.run(abs, fn)
+}
+
+/** a file tool was asked to work before the reader chose a folder */
+export class NoWorkspace extends Error {
+  constructor() {
+    super(
+      'No folder is open. The agent reads and writes only inside a folder you choose — ' +
+        'pick one from the composer before asking it to touch files.',
+    )
+    this.name = 'NoWorkspace'
+  }
+}
+
+/** a path inside the boundary that is still none of the agent's business */
+export class ProtectedPath extends Error {
+  constructor(requested: string) {
+    super(`Refused: "${requested}" is a protected path and is never read or written by the agent.`)
+    this.name = 'ProtectedPath'
+  }
 }
 
 /**
@@ -49,7 +100,15 @@ export function setWorkspace(next: string): string {
   if (!trimmed) throw new WorkspaceViolation(String(next ?? ''))
   const abs = resolve(trimmed)
   if (!isAbsolute(abs)) throw new WorkspaceViolation(trimmed)
+  if (!existsSync(abs)) throw new WorkspaceViolation(trimmed)
   workspaceRoot = abs
+  /* remembered, so a new window opens where the reader was working — not at
+     the process folder, and not at home */
+  try {
+    writeFileSync(LAST_WORKSPACE_FILE, JSON.stringify({ workspace: abs }))
+  } catch {
+    /* a read-only data dir is not a reason to refuse the folder */
+  }
   return abs
 }
 
@@ -57,6 +116,19 @@ export function setWorkspace(next: string): string {
    default stays the user's real one */
 export const DATA_DIR = process.env.LOONG_DATA_DIR ?? join(homedir(), '.loong')
 export const DB_PATH = join(DATA_DIR, 'loong.db')
+const LAST_WORKSPACE_FILE = join(DATA_DIR, 'workspace.json')
+
+/* restore the folder the reader last opened, if it still exists */
+if (!workspaceRoot) {
+  try {
+    const saved = JSON.parse(readFileSync(LAST_WORKSPACE_FILE, 'utf8')) as { workspace?: unknown }
+    if (typeof saved.workspace === 'string' && existsSync(saved.workspace)) {
+      workspaceRoot = resolve(saved.workspace)
+    }
+  } catch {
+    /* first launch, or a folder that is gone — the picker will ask */
+  }
+}
 
 /** never hand the model more than this from a single file */
 export const MAX_READ_BYTES = 200_000
@@ -66,7 +138,7 @@ export const MAX_READ_BYTES = 200_000
  * two file reads and refuses to write code. A read that needs more than this
  * is a read that should name a line range, so the note says so.
  */
-export const MAX_OUTPUT_CHARS = 4_000
+export const MAX_OUTPUT_CHARS = 8_000
 export const SHELL_TIMEOUT_MS = 60_000
 export const FETCH_TIMEOUT_MS = 20_000
 /** stop walking the tree after this many files */
@@ -143,7 +215,38 @@ export class WorkspaceViolation extends Error {
  * is microseconds; the OS-level answer is containers, which is a different
  * product. Until then this is the strongest honest check.
  */
+/* Folders that are never the agent's business, even when they sit inside the
+   chosen folder. A home directory chosen as a workspace would otherwise expose
+   `.agent-collab`, keys and cloud credentials by accident. */
+const PROTECTED_SEGMENTS = new Set([
+  '.agent-collab',
+  '.ssh',
+  '.aws',
+  '.gnupg',
+  '.password-store',
+  '.kube',
+  'credential-store',
+])
+
+function assertNotProtected(abs: string, requested: string): void {
+  const rel = relative(workspaceReal(), abs)
+  for (const part of rel.split(/[\\/]/).filter(Boolean)) {
+    if (PROTECTED_SEGMENTS.has(part.toLowerCase())) throw new ProtectedPath(requested)
+  }
+  /* the agent's own data folder — trust decisions, keys, the journal — is
+     readable by the process, never by the model */
+  try {
+    const dataReal = realpathSync(DATA_DIR)
+    const target = realpathOf(abs)
+    if (target === dataReal || target.startsWith(dataReal + sep)) throw new ProtectedPath(requested)
+  } catch (err) {
+    if (err instanceof ProtectedPath) throw err
+  }
+}
+
 export function resolveInside(requested: string): string {
+  if (!haveWorkspace()) throw new NoWorkspace()
+
   /* A null byte is refused outright. `path.resolve` would happily normalise it
      away as an ordinary segment, but the syscall underneath truncates at it, so
      the path that was checked and the path that is opened would differ. That
@@ -161,16 +264,19 @@ export function resolveInside(requested: string): string {
      and the new tail is re-attached — a new file cannot escape by existing. */
   const real = realpathOf(abs)
   if (!isInside(real)) throw new WorkspaceViolation(requested)
+  assertNotProtected(real, requested)
 
   return abs
 }
 
 /** the workspace itself, canonical — OneDrive and junctions redirect silently */
 function workspaceReal(): string {
+  const root = runRoot.getStore() ?? workspaceRoot
+  if (!root) return ''
   try {
-    return realpathSync(getWorkspace())
+    return realpathSync(root)
   } catch {
-    return getWorkspace()
+    return root
   }
 }
 

@@ -235,10 +235,9 @@ export function skillIndexBlock(): string {
   return `\n\nSKILLS AVAILABLE — playbooks that load automatically when the message matches their triggers. Read a skill's folder (references/, scripts/) with read_file when you need more than the body.\n${lines.join('\n')}`
 }
 
-/**
- * Level 3 — the folder a skill lives in, so the model can read its references
- * and run its scripts. The standard calls this "bundled resources": the body
- * says what to do, the folder holds the material.
+/** Level 3 — the folder a skill lives in, so the model can read its references
+ *  and run its scripts. The standard calls this "bundled resources": the body
+ *  says what to do, the folder holds the material.
  */
 export function skillDir(skill: Skill): string {
   for (const dir of skillDirs()) {
@@ -246,6 +245,16 @@ export function skillDir(skill: Skill): string {
     if (existsSync(path)) return dir
   }
   return skillDirs()[0] ?? ''
+}
+
+/** load one skill by name — the "reach for a skill you saw in the index" path */
+export function readSkill(name: string): Skill | null {
+  const wanted = name.trim().toLowerCase()
+  return (
+    listSkills().find((s) => s.name.toLowerCase() === wanted) ??
+    listSkills().find((s) => s.name.toLowerCase().includes(wanted)) ??
+    null
+  )
 }
 
 /**

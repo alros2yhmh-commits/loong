@@ -24,6 +24,24 @@ const PROTECTED_TURNS = 8
  *  The UI transcript is untouched; only the model-facing copy is trimmed. */
 const MAX_TOOL_OUTPUT = 4_000
 
+/** the second tier: past this the old tool results are cleared in place,
+ *  before the whole old section is worth summarizing. Full summarization
+ *  loses the shape of the conversation; clearing a stale grep result does
+ *  not — it only removes an answer the model can fetch again.
+ *  Exported so the run can fire PreCompact/PostCompact only when there is
+ *  actually work to do. */
+export const COMPACT_HINT_CHARS = 12_000
+/** how many of the newest tool results are never cleared */
+const KEEP_RECENT_TOOL_RESULTS = 6
+const CLEARED_MARK = '[cleared to keep the context small'
+
+/** the size the model would pay for, by the same rough proxy the budget uses */
+export function contextChars(history: HistoryTurn[]): number {
+  return history.reduce((sum, t) => {
+    return sum + t.content.length + JSON.stringify(t.toolCalls ?? []).length + JSON.stringify(t.toolResults ?? []).length
+  }, 0)
+}
+
 /**
  * Compact a history so it fits within the character budget.
  *
@@ -33,20 +51,53 @@ const MAX_TOOL_OUTPUT = 4_000
  * a 200-line grep output from 10 turns ago is dead weight.
  */
 export function compactHistory(history: HistoryTurn[]): HistoryTurn[] {
-  if (history.length <= PROTECTED_TURNS) return truncateToolOutputs(history)
+  const clipped = truncateToolOutputs(history)
+  if (contextChars(clipped) <= COMPACT_HINT_CHARS) return clipped
 
-  const totalChars = history.reduce((sum, t) => {
-    return sum + t.content.length + JSON.stringify(t.toolCalls ?? []).length + JSON.stringify(t.toolResults ?? []).length
-  }, 0)
+  /* tier 1: old tool results are answers the model can ask for again. The
+     newest few stay verbatim — they are what the current turn is built on. */
+  const micro = microcompact(clipped)
+  if (contextChars(micro) <= MAX_CONTEXT_CHARS) return micro
 
-  if (totalChars <= MAX_CONTEXT_CHARS) return truncateToolOutputs(history)
-
-  const splitIdx = history.length - PROTECTED_TURNS
-  const old = history.slice(0, splitIdx)
-  const recent = history.slice(splitIdx)
+  /* tier 2: still too large — collapse the old section into one summary */
+  if (micro.length <= PROTECTED_TURNS) return micro
+  const splitIdx = micro.length - PROTECTED_TURNS
+  const old = micro.slice(0, splitIdx)
+  const recent = micro.slice(splitIdx)
 
   const summary = summarize(old)
   return truncateToolOutputs([summary, ...recent])
+}
+
+/**
+ * Clear the oldest tool results, keeping the newest KEEP_RECENT_TOOL_RESULTS
+ * intact. The replacement says what was lost and how to get it back, so the
+ * model does not read the gap as "the tool returned nothing".
+ */
+function microcompact(history: HistoryTurn[]): HistoryTurn[] {
+  let keep = KEEP_RECENT_TOOL_RESULTS
+  const out = [...history]
+  for (let i = out.length - 1; i >= 0; i--) {
+    const results = out[i].toolResults
+    if (!results?.length) continue
+    let changed = false
+    const next = [...results]
+    for (let j = next.length - 1; j >= 0; j--) {
+      if (keep > 0) {
+        keep -= 1
+        continue
+      }
+      const r = next[j]
+      if (r.output.startsWith(CLEARED_MARK)) continue
+      changed = true
+      next[j] = {
+        ...r,
+        output: `${CLEARED_MARK} — ${r.output.length} chars; re-read the file or re-run the tool if it still matters]`,
+      }
+    }
+    if (changed) out[i] = { ...out[i], toolResults: next }
+  }
+  return out
 }
 
 /**
