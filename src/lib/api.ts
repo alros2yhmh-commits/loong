@@ -8,14 +8,15 @@
    =========================================================================== */
 
 export const API_BASE =
-  typeof window !== 'undefined' && window.location.protocol.startsWith('http')
+  bridge()?.apiBase ?? (typeof window !== 'undefined' && window.location.protocol.startsWith('http')
     ? ''
-    : 'http://127.0.0.1:5274'
+    : 'http://127.0.0.1:5274')
 
 type LoongBridge = {
   pickWorkspace?: () => Promise<string | null>
   openExternal?: (url: string) => void
   token?: string
+  apiBase?: string
 }
 
 function bridge(): LoongBridge | undefined {
@@ -84,6 +85,30 @@ export interface ModelInfo {
   vision?: boolean | null
   context?: number | null
   price?: { prompt?: number; completion?: number } | null
+  tools?: boolean
+  supportsTools?: boolean
+  reasoning?: boolean
+  contextLength?: number
+  outputLimit?: number | null
+  free?: boolean
+  promptPrice?: string
+  completionPrice?: string
+}
+
+export interface RewindResult {
+  ok: boolean
+  runId: string
+  restored: number
+  removed: number
+  conflicts: { path: string; reason: string }[]
+  failed: string[]
+}
+
+export interface ModelCatalogResponse {
+  models: ModelInfo[]
+  stale?: boolean
+  error?: string
+  fetchedAt?: number
 }
 
 export interface ProviderInfo {
@@ -283,9 +308,9 @@ export const api = {
 
   /* models */
   providers: () => json<{ providers: ProviderInfo[] }>('/api/providers'),
-  models: () => json<{ models: ModelInfo[] }>('/api/models'),
-  catalog: () => json<{ models: ModelInfo[] }>('/api/catalog/models'),
-  openrouterModels: () => json<{ models: ModelInfo[] }>('/api/openrouter/models'),
+  models: () => json<ModelCatalogResponse>('/api/models'),
+  catalog: (provider?: string) => json<ModelCatalogResponse>(`/api/catalog/models${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`),
+  openrouterModels: () => json<ModelCatalogResponse>('/api/openrouter/models'),
 
   /* keys — the interface may set one and ask whether one is set, never read one */
   keys: () => json<{ keys: Record<string, { set: boolean; hint: string; baseUrl: string }> }>('/api/keys'),
@@ -328,8 +353,8 @@ export const api = {
 
   /* files */
   tree: () => json<{ tree: unknown }>('/api/tree'),
-  files: (path: string) =>
-    json<{ content: string }>(`/api/files?path=${encodeURIComponent(path)}`),
+  files: (path: string, signal?: AbortSignal) =>
+    json<{ content: string }>(`/api/files?path=${encodeURIComponent(path)}`, { signal }),
   shotUrl: (name: string) => `${API_BASE}/api/shots/${encodeURIComponent(name)}`,
 
   /* memory, skills, library */
@@ -351,9 +376,10 @@ export const api = {
 
   /* git, checkpoints, traces */
   gitStatus: () => json<GitStatus>('/api/git/status'),
-  gitDiff: () => json<GitDiff>('/api/git/diff'),
+  gitDiff: (signal?: AbortSignal) => json<GitDiff>('/api/git/diff', { signal }),
   gitLog: () => json<{ commits: unknown[] }>('/api/git/log'),
   checkpoints: () => json<{ checkpoints: Checkpoint[] }>('/api/checkpoints'),
+  rewind: (runId: string) => post<RewindResult>('/api/checkpoints/rewind', { runId }),
   traces: () => json<{ traces: TraceRow[] }>('/api/traces'),
   health: () =>
     json<{ ok: boolean; ollama?: { up: boolean }; workspace: string | null }>('/api/health'),

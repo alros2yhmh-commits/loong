@@ -96,6 +96,7 @@ export function Composer(p: ComposerProps) {
         >
           {/* the field — normal flow, so the controls can never sit on it */}
           <textarea
+            dir="auto"
             ref={area}
             defaultValue={p.value}
             rows={1}
@@ -215,14 +216,14 @@ export function Composer(p: ComposerProps) {
               type="button"
               onClick={p.onOpenModeMenu}
               aria-label="Permission mode"
-              aria-haspopup="menu"
+              aria-haspopup="dialog"
               className="ctl flex items-center gap-[5px] rounded-[7px] px-[7px] py-[3px] t-tiny"
               style={{
                 color: p.trust === 'auto' ? 'var(--amber)' : 'var(--text-3)',
                 background: p.trust === 'auto' ? 'var(--amber-dim)' : 'transparent',
               }}
             >
-              {p.trust === 'auto' ? 'Full trust' : MODE_LABEL[p.mode]}
+              {MODE_LABEL[p.mode]}{p.mode === 'agent' ? p.trust === 'auto' ? ' · Full trust' : ' · Ask first' : p.mode === 'plan' ? ' · Read only' : ' · No tools'}
               <svg width="8" height="8" viewBox="0 0 12 12" fill="none" aria-hidden>
                 <path d="M3 4.6L6 7.4l3-2.8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
               </svg>

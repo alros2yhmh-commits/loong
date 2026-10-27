@@ -1,3 +1,7 @@
+import { runStore, type RunRecord } from './runs.ts'
+import { cancelRunApprovals, cancelRunQuestions } from './approvals.ts'
+import { killShell } from './pty.ts'
+import { stopProject } from './project-run.ts'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { streamSSE } from 'hono/streaming'
@@ -39,7 +43,7 @@ import {
   type McpServerSpec,
 } from './mcp.ts'
 import { runAgent, type ChatMessage, type AgentMode, type HistoryTurn } from './agent.ts'
-import { PROVIDERS, listLocalModels, listOpenRouterModels, probeOllama, type ProviderConfig } from './providers.ts'
+import { PROVIDERS, listLocalModels, listOpenRouterModels, openRouterCatalogStatus, probeOllama, type ProviderConfig } from './providers.ts'
 import {
   appendMessage,
   autoTitle,
@@ -51,7 +55,7 @@ import {
   renameSession,
 } from './db.ts'
 import { loadBlocks, saveBlocks, deleteBlocks } from './threads.ts'
-import { loadCatalog, modelsOf } from './catalog.ts'
+import { loadCatalog, modelsOf, catalogStatus } from './catalog.ts'
 import { INTEGRATIONS, configuredIntegrations, connectIntegration, disconnectIntegration } from './integrations.ts'
 import { ackTimer, addTimer, cancelTimer, fireDue, listTimers, parseDelay, pendingTimers } from './timers.ts'
 import type { ProviderId } from './providers.ts'
@@ -98,7 +102,7 @@ const ALLOWED_ORIGINS = new Set([
   'http://127.0.0.1:5274',
   'tauri://localhost',
   'https://tauri.localhost',
-  'file://',
+  'loong://app',
   /* 'null' is deliberately absent: a sandboxed iframe or data:/blob: context
      presents Origin: null, and the app ships no iframes, so allowing it would
      only widen the surface for a page that can drive the local agent. */
@@ -143,6 +147,15 @@ export function isLoopbackPeer(address: string): boolean {
    token, an unsigned request is now accepted only from loopback. */
 app.use('*', async (c, next) => {
   const peer = peerAddress(c)
+  const origin = c.req.header('origin')
+  if (c.req.method === 'OPTIONS') {
+    if (!origin || !ALLOWED_ORIGINS.has(origin)) return c.json({ error: 'Origin not allowed.' }, 403)
+    c.header('Access-Control-Allow-Origin', origin)
+    c.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS')
+    c.header('Access-Control-Allow-Headers', 'content-type, accept, x-loong-token, last-event-id')
+    c.header('Vary', 'Origin')
+    return c.body(null, 204)
+  }
   if (SESSION_TOKEN) {
     /* screenshots are <img src> — they cannot send a header. Loopback + a
        generated filename is the whole allowance; anything else still needs the token. */
@@ -156,7 +169,6 @@ app.use('*', async (c, next) => {
       403,
     )
   }
-  const origin = c.req.header('origin')
   if (origin && !ALLOWED_ORIGINS.has(origin)) {
     return c.json({ error: 'Origin not allowed.' }, 403)
   }
@@ -167,8 +179,8 @@ app.use(
   '*',
   cors({
     origin: (o) => (o && ALLOWED_ORIGINS.has(o) ? o : null),
-    allowHeaders: ['content-type', 'accept', 'x-loong-token'],
-    allowMethods: ['GET', 'POST', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowHeaders: ['content-type', 'accept', 'x-loong-token', 'last-event-id'],
+    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   }),
 )
 
@@ -416,7 +428,7 @@ app.get('/api/catalog/models', async (c) => {
   try {
     const catalog = await loadCatalog()
     const models = modelsOf(catalog, provider).filter((m) => m.tools)
-    return c.json({ provider, models, count: models.length })
+    return c.json({ provider, models, count: models.length, ...catalogStatus() })
   } catch (e) {
     /* an offline machine keeps the manual field: the list is a convenience,
        never a requirement */
@@ -428,7 +440,7 @@ app.get('/api/openrouter/models', async (c) => {
   try {
     const force = c.req.query('refresh') === '1'
     const models = await listOpenRouterModels(force)
-    return c.json({ models, free: models.filter((m) => m.free).length })
+    return c.json({ models, free: models.filter((m) => m.free).length, ...openRouterCatalogStatus() })
   } catch (err) {
     return c.json({ models: [], error: (err as Error).message }, 200)
   }
@@ -702,15 +714,20 @@ app.get('/api/checkpoints', (c) => c.json({ checkpoints: listCheckpoints() }))
 
 app.post('/api/checkpoints/rewind', async (c) => {
   const body = await c.req.json().catch(() => ({})) as { runId?: string }
+  const target = body.runId ? runStore.get(String(body.runId)) : null
+  if (target && (!target.settled || target.workspace !== getWorkspace())) {
+    return c.json({ error: 'Stop this run and open its project before undoing its changes.' }, 409)
+  }
   const result = body.runId ? rewindRun(String(body.runId)) : rewindLastRun()
   if (!result) {
     return c.json({ error: 'Nothing to rewind — no run has changed any file yet.' }, 404)
   }
+  if (target) runStore.annotate(target.id, { type: 'CUSTOM', name: 'loong.rewound', value: { runId: target.id, restored: result.restored.length, removed: result.removed.length, conflicts: result.conflicts, failed: result.failed } } as unknown as BaseEvent)
   return c.json({
-    ok: true,
+    ok: result.failed.length === 0 && result.conflicts.length === 0,
     runId: result.runId,
     restored: result.restored.length,
-    removed: result.removed.length,
+    removed: result.removed.length, conflicts: result.conflicts, failed: result.failed,
   })
 })
 
@@ -927,6 +944,7 @@ app.delete('/api/hooks/trust', (c) => {
 
 interface RunBody {
   threadId?: string
+  requestId?: string
   sessionId?: string
   messages?: ChatMessage[]
   /** the conversation with tool calls and results, preferred over `messages` */
@@ -945,160 +963,143 @@ interface RunBody {
   capabilities?: Partial<Capabilities>
 }
 
-app.post('/api/agent', async (c) => {
-  if (rateLimited(clientIp(c))) {
-    return c.json(
-      { error: 'Too many runs in the last minute. Wait a few seconds and try again.' },
-      429,
-    )
-  }
+const activeRuns = new Map<string, AbortController>()
 
-  const body = await c.req.json().catch(() => ({})) as RunBody
-
-  const config: ProviderConfig = body.config ?? {
-    provider: 'ollama',
-    model: '',
-  }
-  const messages = (body.messages ?? []).filter(
-    (m) => typeof m?.content === 'string' && m.content.trim().length > 0,
-  )
-
-  if (messages.length === 0) {
-    return c.json({ error: 'No messages to send.' }, 400)
-  }
-  if (!config.model?.trim()) {
-    return c.json({ error: 'No model selected. Open Settings and pick one.' }, 400)
-  }
-
-  /* Which folder is this run allowed to touch?
-     A saved session carries its own folder, and that is authoritative — opening
-     an old project must not inherit the folder of the one next to it. A run
-     with neither is refused rather than defaulted: the old default was the
-     user's home, which made the "jail" the whole house. */
-  const savedRoot = body.sessionId ? getSession(body.sessionId)?.workspace ?? null : null
-  const runRoot = savedRoot ?? (haveWorkspace() ? getWorkspace() : null)
-  if (!runRoot) {
-    return c.json(
-      { error: 'Choose a folder first. The agent only reads and writes inside a folder you open.' },
-      400,
-    )
-  }
-  if (!existsSync(runRoot)) {
-    return c.json(
-      { error: `The folder this session belongs to is gone: ${runRoot}. Open the session and pick the folder again.` },
-      400,
-    )
-  }
-
-  const runId = randomUUID()
-  const threadId = body.threadId ?? body.sessionId ?? randomUUID()
+async function beginRun(body: RunBody): Promise<{ run: RunRecord } | { error: string; status: 400 | 409 }> {
   const mode: AgentMode = body.mode === 'plan' || body.mode === 'ask' ? body.mode : 'agent'
-  const trust: 'ask' | 'auto' = body.trust === 'auto' ? 'auto' : 'ask'
-  /* the confidence gate is only honoured in full-trust mode; a bad threshold is
-     clamped, a bad shape is dropped (which leaves trust=auto ungated — the old
-     behaviour — never the reverse) */
-  const confidence =
-    trust === 'auto' && body.confidence && typeof body.confidence.threshold === 'number' && Number.isFinite(body.confidence.threshold)
-      ? {
-          threshold: Math.min(1, Math.max(0, body.confidence.threshold)),
-          decisionModel:
-            typeof body.confidence.decisionModel === 'string'
-              ? body.confidence.decisionModel.slice(0, 120)
-              : undefined,
-        }
-      : undefined
-
-  /* capabilities are per-run state: the reader may switch the browser or a
-     search key without restarting anything */
-  if (body.capabilities && typeof body.capabilities === 'object') {
-    setCapabilities(body.capabilities)
+  const config: ProviderConfig = body.config ?? { provider: 'ollama', model: '' }
+  const messages = (Array.isArray(body.messages) ? body.messages : []).filter(
+    (m) => m && ['user', 'assistant', 'system'].includes(m.role) && typeof m.content === 'string' && m.content.trim())
+  if (!messages.length) return { error: 'No messages to send.', status: 400 }
+  if (!config.model?.trim()) return { error: 'Choose a model in the model picker.', status: 400 }
+  if (!['ollama', 'openrouter', 'openai', 'anthropic', 'google', 'custom'].includes(config.provider)) {
+    return { error: 'Unknown provider.', status: 400 }
   }
-
-  if (body.sessionId) {
-    const lastUser = [...messages].reverse().find((m) => m.role === 'user')
-    if (lastUser) {
-      appendMessage({ sessionId: body.sessionId, role: 'user', content: lastUser.content })
-      autoTitle(body.sessionId, lastUser.content)
-    }
+  const savedSession = body.sessionId ? getSession(body.sessionId) : null
+  if (body.sessionId && !savedSession) return { error: 'This session no longer exists.', status: 400 }
+  const runRoot = savedSession?.workspace ?? (haveWorkspace() ? getWorkspace() : mode === 'ask' ? getWorkspace() : null)
+  if (!runRoot || !existsSync(runRoot)) return { error: 'Choose a folder first. Select an existing project directory.', status: 400 }
+  const threadId = body.threadId ?? body.sessionId ?? randomUUID()
+  const previous = runStore.list(threadId)
+  if (body.requestId) {
+    const existing = previous.find((run) => run.requestId === body.requestId)
+    if (existing) return { run: existing }
   }
+  if (previous.some((run) => !run.settled)) return { error: 'This task already has a running agent. Reconnect or stop it first.', status: 409 }
+  const trust = body.trust === 'auto' ? 'auto' : 'ask'
+  const record = runStore.create({ threadId, sessionId: body.sessionId, workspace: runRoot,
+    provider: config.provider, selectedModel: config.model, mode, trust,
+    route: body.route === 'auto' ? 'auto' : 'manual',
+    requestId: typeof body.requestId === 'string' ? body.requestId.slice(0, 100) : undefined })
+  const controller = new AbortController()
+  activeRuns.set(record.id, controller)
+  liveThreads.add(threadId)
+  if (body.capabilities && typeof body.capabilities === 'object') setCapabilities(body.capabilities)
+  const lastUser = [...messages].reverse().find((message) => message.role === 'user')
+  if (body.sessionId && lastUser) {
+    appendMessage({ sessionId: body.sessionId, role: 'user', content: lastUser.content })
+    autoTitle(body.sessionId, lastUser.content)
+  }
+  const previousHistory = previous[0] ? runStore.history(previous[0].id) : null
+  const history = previousHistory?.length && lastUser
+    ? [...previousHistory, { role: 'user' as const, content: lastUser.content }]
+    : Array.isArray(body.history) ? body.history.slice(-400) : undefined
+  runStore.checkpoint(record.id, history ?? messages.filter((message) => message.role !== 'system').map((message) => ({ role: message.role as 'user' | 'assistant', content: message.content })))
+  let assistantText = ''
+  const emit = (event: BaseEvent) => {
+    if (event.type === 'TEXT_MESSAGE_CONTENT') assistantText += (event as unknown as { delta?: string }).delta ?? ''
+    runStore.append(record.id, event)
+  }
+  // Persist acceptance before launching work. This task outlives its stream subscribers.
+  runStore.append(record.id, { type: 'CUSTOM', name: 'loong.run', value: { ...record, task: lastUser?.content } } as unknown as BaseEvent)
+  void withRunWorkspace(runRoot, () => runWithRunId(record.id, () => sessionWithId(body.sessionId ?? threadId, () =>
+    runAgent({ runId: record.id, threadId, sessionId: body.sessionId, messages, history, config, mode, trust,
+      route: record.route, securityScan: true,
+      confidence: trust === 'auto' && typeof body.confidence?.threshold === 'number'
+        ? { threshold: Math.max(0, Math.min(1, body.confidence.threshold)), decisionModel: body.confidence.decisionModel } : undefined,
+      userName: typeof body.userName === 'string' ? body.userName.slice(0, 40) : undefined,
+      onCheckpoint: (turns) => runStore.checkpoint(record.id, turns), emit, abortSignal: controller.signal,
+    })))).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : 'The agent failed unexpectedly.'
+      emit({ type: 'RUN_ERROR', message } as unknown as BaseEvent)
+    }).finally(() => {
+      if (body.sessionId && assistantText.trim()) appendMessage({ sessionId: body.sessionId, role: 'assistant', content: assistantText })
+      activeRuns.delete(record.id)
+      liveThreads.delete(threadId)
+      runStore.settle(record.id, controller.signal.aborted ? 'cancelled' : 'partial')
+    })
+  return { run: record }
+}
 
+function eventsResponse(c: Parameters<typeof streamSSE>[0], run: RunRecord, after: number) {
   return streamSSE(c, async (stream) => {
     const encoder = new EventEncoder({ accept: 'text/event-stream' })
-    const buffer: BaseEvent[] = []
-    let wake: (() => void) | null = null
-    let finished = false
-    let assistantText = ''
-
-    const emit = (event: BaseEvent) => {
-      if (event.type === 'TEXT_MESSAGE_CONTENT') {
-        const e = event as unknown as { delta?: string }
-        if (typeof e.delta === 'string') assistantText += e.delta
-      }
-      buffer.push(event)
-      wake?.()
-      wake = null
-    }
-
-    const controller = new AbortController()
-    stream.onAbort(() => controller.abort())
-
-    /* the run id and its folder ride the async context, so two runs in flight
-       cannot attribute each other's writes to the journal — or each other's
-       paths to the wrong project. The session rides it too: the agent bus and
-       the digest need to know which conversation is talking. */
-    const run = withRunWorkspace(runRoot, () =>
-      runWithRunId(runId, () =>
-      sessionWithId(body.sessionId ?? threadId, () =>
-      runAgent({
-        runId,
-        threadId,
-        sessionId: body.sessionId,
-        messages,
-        history: Array.isArray(body.history) ? body.history.slice(-400) : undefined,
-        config,
-        mode,
-        trust,
-        route: body.route === 'manual' ? 'manual' : 'auto',
-        /* the confidence gate rides the run, so full-trust still parks the
-           writes it is not sure about */
-        confidence,
-        /* the deterministic post-run security gate — on for real runs */
-        securityScan: true,
-        /* what the reader asked to be called — one line in the prompt */
-        userName: typeof body.userName === 'string' ? body.userName.slice(0, 40) : undefined,
-        emit,
-        abortSignal: controller.signal,
-      }),
-      ),
-      ),
-    ).finally(() => {
-      liveThreads.delete(threadId)
-      finished = true
-      wake?.()
-      wake = null
-    })
-
-    while (!finished || buffer.length > 0) {
-      if (buffer.length === 0) {
+    let cursor = after
+    let connected = true
+    let wake: (() => void) | undefined
+    stream.onAbort(() => { connected = false; wake?.() })
+    const detach = runStore.subscribe(run.id, () => wake?.())
+    try {
+      while (connected) {
+        const events = runStore.events(run.id, cursor)
+        for (const event of events) {
+          await stream.write(`id: ${event.sequence}\n` + encoder.encodeSSE(event))
+          cursor = event.sequence
+        }
+        const current = runStore.get(run.id)
+        if (current?.settled) {
+          // Recovered runs may have no terminal event in their old log.
+          await stream.write(`data: ${JSON.stringify({ type: 'CUSTOM', name: 'loong.settled', runId: run.id, value: current })}\n\n`)
+          break
+        }
         await new Promise<void>((resolve) => {
-          wake = resolve
+          const timer = setTimeout(resolve, 10_000)
+          wake = () => { clearTimeout(timer); resolve() }
         })
-        continue
+        wake = undefined
+        if (connected) await stream.write(': keep-alive\n\n')
       }
-      const event = buffer.shift()!
-      await stream.write(encoder.encodeSSE(event))
-    }
-
-    await run
-
-    if (body.sessionId && assistantText.trim()) {
-      appendMessage({
-        sessionId: body.sessionId,
-        role: 'assistant',
-        content: assistantText,
-      })
-    }
+    } catch {
+      // Disconnecting a subscriber does not cancel, retry, or finish its task.
+    } finally { detach() }
   })
+}
+
+app.get('/api/runs', (c) => c.json({ runs: runStore.list(c.req.query('threadId')) }))
+app.get('/api/runs/:id', (c) => {
+  const run = runStore.get(c.req.param('id'))
+  return run ? c.json({ run, events: runStore.events(run.id) }) : c.json({ error: 'Run not found.' }, 404)
+})
+app.get('/api/runs/:id/events', (c) => {
+  const run = runStore.get(c.req.param('id'))
+  if (!run) return c.json({ error: 'Run not found.' }, 404)
+  const after = Math.max(0, Number(c.req.query('after') ?? c.req.header('last-event-id') ?? 0) || 0)
+  return eventsResponse(c, run, after)
+})
+app.post('/api/runs/:id/cancel', (c) => {
+  const id = c.req.param('id')
+  const run = runStore.get(id)
+  if (!run) return c.json({ error: 'Run not found.' }, 404)
+  const controller = activeRuns.get(id)
+  if (controller) {
+    controller.abort()
+    cancelRunApprovals(id)
+    cancelRunQuestions(id)
+    void killShell(id)
+    void stopProject(id)
+  }
+  return c.json({ ok: true, run: runStore.get(id) })
+})
+app.post('/api/runs/start', async (c) => {
+  if (rateLimited(clientIp(c))) return c.json({ error: 'Too many runs. Wait a few seconds.' }, 429)
+  const result = await beginRun(await c.req.json().catch(() => ({})) as RunBody)
+  return 'error' in result ? c.json({ error: result.error }, result.status) : c.json(result, 202)
+})
+// Backwards-compatible CLI/client route, now backed by the same durable run.
+app.post('/api/agent', async (c) => {
+  if (rateLimited(clientIp(c))) return c.json({ error: 'Too many runs. Wait a few seconds.' }, 429)
+  const result = await beginRun(await c.req.json().catch(() => ({})) as RunBody)
+  return 'error' in result ? c.json({ error: result.error }, result.status) : eventsResponse(c, result.run, 0)
 })
 
 app.notFound((c) => c.json({ error: 'not found', path: c.req.path }, 404))

@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AnimatePresence, motion } from 'motion/react'
+import { AnimatePresence, MotionConfig, motion } from 'motion/react'
 import { api, type SessionRow, type Settings } from './lib/api'
 import { useSessionStreams, toHistory } from './lib/stream'
 import { newId } from './lib/blocks'
+import { outcomeLabel, taskBlocks, taskObjective } from './lib/evidence'
+import { useDialogFocus } from './lib/dialog'
+import { EvidencePanel, type EvidenceTab } from './components/EvidencePanel'
 import { Sidebar, type Surface } from './components/Sidebar'
 import { Composer, type Mode, type Trust } from './components/Composer'
 import { Transcript, EmptyState } from './components/Transcript'
 import { StatusBar } from './components/StatusBar'
 import { SettingsPanel } from './components/SettingsPanel'
 import { CommandPalette } from './components/CommandPalette'
-import { DiffPane } from './components/DiffPane'
 import { InspectPanel, type InspectTab } from './components/InspectPanel'
 import { ModeMenu } from './components/ModeMenu'
 import { ModelPicker } from './components/ModelPicker'
@@ -59,7 +61,11 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
-  const [diffOpen, setDiffOpen] = useState(false)
+  const [evidenceTab, setEvidenceTab] = useState<EvidenceTab | null>(null)
+  const [direction, setDirection] = useState<'ltr' | 'rtl'>(() => {
+    try { return localStorage.getItem('loong.direction') === 'rtl' ? 'rtl' : 'ltr' }
+    catch { return 'ltr' }
+  })
   const [modeMenu, setModeMenu] = useState<{ x: number; y: number } | null>(null)
   const [health, setHealth] = useState<boolean | null>(null)
   const [width, setWidth] = useState(persistedWidth)
@@ -79,6 +85,8 @@ export default function App() {
   const [findingSummary, setFindingSummary] = useState<{ open: number; critical: number } | null>(null)
   const dragFrom = useRef<{ x: number; w: number } | null>(null)
   const scroller = useRef<HTMLDivElement>(null)
+  const deleteDialog = useRef<HTMLDivElement>(null)
+  useDialogFocus(deleteTarget !== null, deleteDialog, () => setDeleteTarget(null))
 
   const streams = useSessionStreams(activeId)
   /* the visible slot — every reader below sees one thread, but the registry
@@ -95,6 +103,13 @@ export default function App() {
   /* Home is a conversation, so it never runs a tool and never needs a folder.
      Code is the agent, and a folder is what makes a session a session. */
   const effectiveMode = surface === 'home' ? 'ask' : (settings?.mode ?? 'agent')
+  useEffect(() => {
+    const changed = () => {
+      try { setDirection(localStorage.getItem('loong.direction') === 'rtl' ? 'rtl' : 'ltr') } catch { /* local preference only */ }
+    }
+    window.addEventListener('loong-direction', changed)
+    return () => window.removeEventListener('loong-direction', changed)
+  }, [])
 
   /* ---- settings ---------------------------------------------------------- */
   useEffect(() => {
@@ -106,12 +121,15 @@ export default function App() {
 
   const patch = useCallback((p: Partial<Settings>) => {
     setSettings((prev) => (prev ? { ...prev, ...p } : prev))
-    void api.putSettings({ settings: p }).catch(() => {})
+    void api.putSettings({ settings: p }).catch((err) => {
+      setNotice(`Settings were not saved: ${(err as Error).message}`)
+      void api.getSettings().then((r) => setSettings(r.settings)).catch(() => {})
+    })
   }, [])
 
   /* ---- first run: take a model rather than offering a send that 400s ------ */
   useEffect(() => {
-    if (!settings || settings.model) return
+    if (!settings || settings.model || settings.provider !== 'ollama') return
     void api
       .models()
       .then((r) => {
@@ -248,7 +266,7 @@ export default function App() {
         return
       }
       if (name === 'changes') {
-        setDiffOpen(true)
+        setEvidenceTab('changes')
         setInput('')
         return
       }
@@ -300,6 +318,7 @@ export default function App() {
        it works, this promise still resolves into that session's slot — the
        visible transcript is a view of the registry, not the run itself. */
     const threadId = id
+    if (surface === 'code') setEvidenceTab((tab) => tab ?? 'checks')
     await streams.run({
       threadId,
       sessionId: id,
@@ -317,12 +336,12 @@ export default function App() {
   /** retry the last run: strip any trailing failure blocks and re-run the
       same history without adding a new user turn */
   const retry = useCallback(async () => {
-    if (!settings || !activeId) return
+    if (!settings || !activeId || stream.running) return
     /* remove trailing failure/noise blocks so the transcript is clean */
     const clean = stream.blocks.slice()
     while (clean.length > 0) {
       const last = clean[clean.length - 1]
-      if (last.k === 'failed' || last.k === 'stop' || last.k === 'notice') {
+      if (last.k === 'failed' || last.k === 'stop' || last.k === 'notice' || last.k === 'outcome') {
         clean.pop()
       } else {
         break
@@ -480,17 +499,17 @@ export default function App() {
       }
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'd') {
         e.preventDefault()
-        setDiffOpen(true)
+        setEvidenceTab((tab) => tab === 'changes' ? null : 'changes')
       }
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'g') {
         e.preventDefault()
         setInspect((v) => (v ? null : 'graph'))
       }
-      if (e.key === 'Escape' && activeId && stream.running) streams.stop(activeId)
+      if (e.key === 'Escape' && evidenceTab) setEvidenceTab(null)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [stream, streams, activeId, newThread])
+  }, [stream, streams, activeId, newThread, evidenceTab])
 
   const folderName = workspace ? (workspace.split(/[\\/]/).filter(Boolean).pop() ?? workspace) : null
   const blockedReason =
@@ -498,10 +517,26 @@ export default function App() {
       ? 'agent offline'
       : !settings?.model
         ? 'no model'
-        : !workspace
+        : effectiveMode !== 'ask' && !workspace
           ? 'choose a folder'
           : null
   const liveHere = Boolean(activeId && runningIds.includes(activeId) && stream.running)
+  const currentTask = useMemo(() => taskBlocks(stream.blocks), [stream.blocks])
+  const objective = useMemo(() => taskObjective(stream.blocks), [stream.blocks])
+  const pendingApprovals = currentTask.filter((block) => block.k === 'approval').length
+  const actualModel = streams.view.actualModel ?? stream.usage?.model
+  const runConfig = streams.view.runConfig
+  const rawRunMode = runConfig?.mode ?? effectiveMode
+  const displayedMode: Mode = rawRunMode === 'ask' || rawRunMode === 'plan' ? rawRunMode : 'agent'
+  const displayedTrust = runConfig?.trust ?? settings?.trust
+  const displayedRoute = runConfig?.route ?? settings?.route
+  const taskStatus = streams.view.outcome
+  const connection = streams.view.connection
+  const taskLabel = connection === 'reconnecting' ? 'Reconnecting to this task'
+    : connection === 'offline' ? 'Connection lost — task state unconfirmed'
+      : liveHere ? stream.phase === 'waiting' ? 'Waiting for your decision'
+        : stream.phase === 'tool' ? 'Executing tools' : stream.phase === 'streaming' ? 'Responding' : 'Working'
+        : taskStatus ? outcomeLabel(taskStatus) : 'Ready'
 
 
   const composer = settings ? (
@@ -534,8 +569,11 @@ export default function App() {
 
 
   return (
+    <MotionConfig reducedMotion={settings?.reducedMotion ? 'always' : 'user'}>
     <div
       className="shell flex h-full w-full flex-col"
+      dir={direction}
+      data-reduced-motion={settings?.reducedMotion ? 'true' : undefined}
       style={{
         /* The dotted canvas + its slow drift live on `.shell` (global.css); the
            grain overlay is the `.grain` child below. One knob the whole type
@@ -585,6 +623,12 @@ export default function App() {
 
         {surface === 'code' && (
           <>
+                <button type="button" className="ctl evidence-toggle rounded-[6px] px-[8px] py-[3px] t-tiny"
+                  style={{ border: '1px solid var(--line-2)', WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+                  onClick={() => setEvidenceTab((tab) => tab ? null : 'checks')}
+                  aria-expanded={evidenceTab !== null} aria-controls="task-evidence-panel">
+                  {evidenceTab ? 'Hide evidence' : 'Task evidence'}
+                </button>
                 <button
                   type="button"
                   className="ctl flex shrink-0 items-center gap-[5px] rounded-[6px] px-[8px] py-[3px] t-tiny"
@@ -616,7 +660,8 @@ export default function App() {
                       WebkitAppRegion: 'no-drag',
                     } as React.CSSProperties
                   }
-                  onClick={() => setDiffOpen(true)}
+                  onClick={() => setEvidenceTab((tab) => tab === 'changes' ? null : 'changes')}
+                  aria-pressed={evidenceTab === 'changes'}
                   title="Review changes in this folder — Ctrl Shift D"
                 >
                   <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden>
@@ -664,7 +709,29 @@ export default function App() {
           resizing={resizing}
         />
 
-        <main className="relative flex min-w-0 flex-1 flex-col">
+        <main className="task-main relative flex min-w-0 flex-1 flex-col" aria-label="Task workspace">
+          {stream.blocks.length > 0 && <section className="task-summary" aria-label="Current task">
+            <div className="flex min-w-0 items-center gap-[9px]">
+              <span className="task-state" role="status" aria-live="polite"
+                data-tone={connection !== 'connected' ? 'warning' : taskStatus === 'failed' ? 'error' : taskStatus === 'completed' ? 'success' : liveHere || taskStatus ? 'warning' : 'neutral'}>
+                {taskLabel}
+              </span>
+              {pendingApprovals > 0 && <span className="t-tiny" style={{ color: 'var(--amber)' }}>{pendingApprovals} approval{pendingApprovals === 1 ? '' : 's'} pending</span>}
+              <span className="flex-1" />
+              {surface === 'code' && <button type="button" className="ctl rounded-[5px] px-[6px] py-[3px] t-tiny"
+                style={{ color: 'var(--text-3)' }} onClick={() => setEvidenceTab('checks')}>Review checks</button>}
+            </div>
+            {objective?.k === 'user' && <details className="mt-[7px]">
+              <summary dir="auto" className="task-objective t-small" title="Expand the original request">{objective.text.slice(0, 180)}{objective.text.length > 180 ? '…' : ''}</summary>
+              <p dir="auto" className="bidi m-0 mt-[8px] whitespace-pre-wrap t-small" style={{ color: 'var(--text-2)' }}>{objective.text}</p>
+            </details>}
+            <div className="mt-[7px] flex flex-wrap items-center gap-x-[12px] gap-y-[4px] t-tiny" style={{ color: 'var(--text-3)' }}>
+              <span>{displayedMode === 'agent' ? `Agent · ${displayedTrust === 'auto' ? 'Full trust' : 'Ask first'}` : displayedMode === 'plan' ? 'Plan · Read only' : 'Chat · No tools'}</span>
+              <span>{displayedRoute === 'auto' ? 'Auto routing' : 'Fixed model'}</span>
+              <span dir="ltr" className="mono truncate" title={actualModel ?? runConfig?.model ?? settings?.model}>{actualModel ? `Used: ${actualModel}` : `Selected: ${runConfig?.model ?? settings?.model ?? 'none'}`}</span>
+              {planCount && <span>Plan {planCount.done}/{planCount.total}</span>}
+            </div>
+          </section>}
           {/* Open sessions, side by side. The strip appears as soon as there is
               more than one, and every tab keeps its own run alive underneath. */}
           {surface === 'code' && openTabs.length > 1 && (
@@ -828,8 +895,14 @@ export default function App() {
                     view={settings?.view ?? 'normal'}
                     running={liveHere}
                     phase={stream.phase}
-                    onDecide={(id, approved) => void api.decide(id, approved).catch(() => {})}
-                    onAnswer={(id, answer) => void api.answer(id, answer).catch(() => {})}
+                    onDecide={async (id, approved) => {
+                      const result = await api.decide(id, approved)
+                      if (!result.ok) throw new Error('The approval is no longer pending. Refresh the task state.')
+                    }}
+                    onAnswer={async (id, answer) => {
+                      const result = await api.answer(id, answer)
+                      if (!result.ok) throw new Error('The question is no longer pending. Refresh the task state.')
+                    }}
                     onRetry={() => void retry()}
                   />
                 </motion.div>
@@ -841,13 +914,21 @@ export default function App() {
             </div>
           </div>
         </main>
+        {surface === 'code' && evidenceTab && <EvidencePanel
+          tab={evidenceTab} onTab={setEvidenceTab} onClose={() => setEvidenceTab(null)}
+          blocks={stream.blocks} workspace={workspace} running={liveHere} onCount={setChangedCount}
+          runId={streams.view.runId} runWorkspace={runConfig?.workspace}
+          onRewound={() => { if (activeId) streams.refresh(activeId) }}
+        />}
       </div>
 
       <StatusBar
         running={liveHere}
         phase={stream.phase}
-        mode={settings?.mode ?? 'agent'}
-        model={stream.usage?.model ?? settings?.model ?? ''}
+        outcome={taskStatus}
+        connection={connection}
+        mode={displayedMode}
+        model={actualModel ?? runConfig?.model ?? settings?.model ?? ''}
         plan={planCount}
         workspace={workspace}
         usage={stream.usage}
@@ -862,9 +943,12 @@ export default function App() {
         open={modeMenu !== null}
         anchor={modeMenu}
         onClose={() => setModeMenu(null)}
-        mode={(settings?.mode ?? 'agent') as Mode}
+        mode={effectiveMode as Mode}
         trust={(settings?.trust ?? 'ask') as Trust}
-        onPick={(m, t) => patch({ mode: m, trust: t })}
+        onPick={(m, t) => {
+          if (surface === 'home' && m !== 'ask') { setSurface('code'); setActiveId(null) }
+          patch({ mode: m, trust: t })
+        }}
       />
 
       <ModelPicker
@@ -872,20 +956,10 @@ export default function App() {
         current={settings?.model ?? ''}
         provider={settings?.provider ?? 'ollama'}
         onClose={() => setModelPicker(false)}
-        onPick={(model) => patch({ model })}
-        onProvider={(provider) => {
-          /* a provider change invalidates the model: pick the first one the new
-             provider offers rather than leaving a name it cannot run */
-          patch({ provider })
-          void api
-            .models()
-            .then((r) => {
-              const first = (r.models ?? [])[0] as unknown as { id?: string; name?: string } | undefined
-              const chosen = first?.id ?? first?.name
-              if (chosen) patch({ model: chosen })
-            })
-            .catch(() => {})
-        }}
+        route={settings?.route ?? 'manual'}
+        onRoute={(route) => patch({ route })}
+        onPick={(model) => patch({ model, route: 'manual' })}
+        onProvider={(provider) => patch({ provider, model: '', route: 'manual' })}
       />
 
       <CommandPalette
@@ -898,9 +972,6 @@ export default function App() {
         onPickFolder={pickFolder}
       />
 
-      {diffOpen && (
-        <DiffPane onClose={() => setDiffOpen(false)} workspace={workspace} onCount={setChangedCount} />
-      )}
 
       <AnimatePresence>
         {inspect && (
@@ -937,11 +1008,12 @@ export default function App() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 6, scale: 0.99 }}
               transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-              className="w-[430px] rounded-[16px] p-[20px]"
+              ref={deleteDialog} role="dialog" aria-modal="true" aria-labelledby="delete-thread-title" tabIndex={-1}
+              className="w-[430px] max-w-[94vw] rounded-[16px] p-[20px]"
               style={{ background: 'var(--canvas)', border: '1px solid var(--line-3)', boxShadow: 'var(--shadow-modal)' }}
               onMouseDown={(e) => e.stopPropagation()}
             >
-              <h2 className="display m-0 t-h3">Delete this thread?</h2>
+              <h2 id="delete-thread-title" className="display m-0 t-h3">Delete this thread?</h2>
               <p className="mt-[6px] mb-[18px] t-small leading-[1.6]" style={{ color: 'var(--text-3)' }}>
                 The conversation goes for good — it cannot be undone. Files the agent already wrote
                 stay where they are.
@@ -981,13 +1053,14 @@ export default function App() {
       {/* the grain overlay — a faint tooth over the whole window, never interactive */}
       <div className="grain" />
     </div>
+    </MotionConfig>
   )
 }
 
 const DEFAULT: Settings = {
   provider: 'ollama',
   model: '',
-  route: 'auto',
+  route: 'manual',
   mode: 'agent',
   trust: 'ask',
   soundEnabled: false,

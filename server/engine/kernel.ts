@@ -482,6 +482,7 @@ export async function runKernelPass(opts: KernelPassOptions): Promise<KernelPass
       }
       const response = await result.response
       actualModel = response.modelId ?? actualModel
+      if (actualModel) emit({ type: EventType.CUSTOM, name: 'loong.model', value: { model: actualModel }, ...base(runId, threadId) } as BaseEvent)
     } catch (err) {
       if (opts.abortSignal?.aborted) {
         closeText()

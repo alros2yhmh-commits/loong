@@ -14,7 +14,7 @@ import type { ApprovalRequest, Audit, Plan, QuestionRequest } from './api'
    2. Nothing is invented. A block exists because an event created it.
    =========================================================================== */
 
-export type Block =
+export type Block = (
   | { k: 'user'; id: string; text: string; at: number }
   | { k: 'text'; id: string; text: string; at: number; streaming?: boolean }
   | { k: 'thinking'; id: string; text: string; at: number; chars: number }
@@ -35,7 +35,7 @@ export type Block =
   | { k: 'approval'; id: string; request: ApprovalRequest; at: number }
   | { k: 'question'; id: string; request: QuestionRequest; at: number }
   | { k: 'audit'; id: string; audit: Audit; at: number }
-  | { k: 'check'; id: string; label: string; ok: boolean; at: number }
+  | { k: 'check'; id: string; label: string; ok: boolean; at: number; command?: string; output?: string; exitCode?: number; seconds?: number }
   | { k: 'screenshot'; id: string; path: string; tool: string; at: number }
   | { k: 'notice'; id: string; text: string; at: number }
   | { k: 'stop'; id: string; reason: string; text: string; model?: string; at: number }
@@ -81,6 +81,8 @@ export type Block =
     }
   /* the ledger counts after a scan */
   | { k: 'findings'; id: string; open: number; critical: number; added: number; revived: number; at: number }
+  | { k: 'outcome'; id: string; status: string; reason?: string; model?: string; at: number }
+) & { runId?: string; eventSequence?: number }
 
 /** the AG-UI events the interface consumes */
 export interface AgentEvent {
@@ -91,7 +93,11 @@ export interface AgentEvent {
   toolCallName?: string
   parentMessageId?: string | null
   rawInput?: unknown
-  result?: string
+  result?: string | Record<string, unknown>
+  content?: string
+  messageId?: string
+  sequence?: number
+  timestamp?: number
   isError?: boolean
   step?: number
   message?: string
@@ -112,7 +118,14 @@ export function newId(): string {
  * every delta.
  */
 export function fold(blocks: Block[], e: AgentEvent): Block[] {
-  const at = Date.now()
+  if (e.sequence && e.runId && blocks.some((b) => b.runId === e.runId && (b.eventSequence ?? 0) >= e.sequence!)) return blocks
+  const next = foldEvent(blocks, e)
+  if (!e.runId || !e.sequence) return next
+  return next.map((b) => blocks.includes(b) ? b : { ...b, runId: e.runId, eventSequence: e.sequence })
+}
+
+function foldEvent(blocks: Block[], e: AgentEvent): Block[] {
+  const at = e.timestamp ?? Date.now()
   const next = blocks.slice()
 
   switch (e.type) {
@@ -123,7 +136,7 @@ export function fold(blocks: Block[], e: AgentEvent): Block[] {
         next[next.length - 1] = { ...last, text: last.text + delta }
         return next
       }
-      next.push({ k: 'text', id: e.textMessageId ?? newId(), text: delta, at, streaming: true })
+      next.push({ k: 'text', id: e.textMessageId ?? e.messageId ?? newId(), text: delta, at, streaming: true })
       return next
     }
 
@@ -185,14 +198,14 @@ export function fold(blocks: Block[], e: AgentEvent): Block[] {
         if (b.k === 'tool') {
           next[i] = {
             ...b,
-            result: e.result ?? b.result,
+            result: typeof e.content === 'string' ? e.content : typeof e.result === 'string' ? e.result : b.result,
             /* the kernel says isError; a transcript stored before that field
                existed is judged by what the tool actually said */
             ok:
               e.isError === true
                 ? false
                 : !/^(?:Tool failed|Refused:|Could not |Browser failed|Request failed)/.test(
-                    String(e.result ?? ''),
+                    String(e.content ?? e.result ?? ''),
                   ),
             live: false,
           }
@@ -201,14 +214,9 @@ export function fold(blocks: Block[], e: AgentEvent): Block[] {
       return next
     }
 
-    case 'TOOL_CALL_END': {
-      const i = next.findIndex((b) => b.k === 'tool' && b.id === e.toolCallId)
-      if (i >= 0) {
-        const b = next[i]
-        if (b.k === 'tool') next[i] = { ...b, live: false }
-      }
+    case 'TOOL_CALL_END':
+      // This marks the end of argument streaming; execution ends on RESULT.
       return next
-    }
 
     case 'STEP_STARTED':
       return next
@@ -228,6 +236,28 @@ export function fold(blocks: Block[], e: AgentEvent): Block[] {
   const v = (e.value ?? {}) as Record<string, unknown>
 
   switch (e.name) {
+    case 'loong.rewound': {
+      next.push({ k: 'notice', id: `rewind-${e.runId ?? v.runId}`, text: 'Changes rewound; previous checks describe the earlier file revision. Conflicting user changes were preserved.', at })
+      return next
+    }
+    case 'loong.run': {
+      const task = String(v.task ?? '')
+      const last = [...next].reverse().find((b) => b.k === 'user')
+      if (task && (!last || last.k !== 'user' || last.text !== task)) next.push({ k: 'user', id: `user-${e.runId}`, text: task, at })
+      return next
+    }
+    case 'loong.outcome':
+    case 'loong.settled': {
+      const status = String(v.status ?? '')
+      if (!status || status === 'running') return next
+      const id = `outcome-${e.runId ?? 'run'}`
+      const row: Block = { k: 'outcome', id, status, reason: typeof v.reason === 'string' ? v.reason : undefined,
+        model: String(v.model ?? v.actualModel ?? '') || undefined, at }
+      const index = next.findIndex((b) => b.id === id)
+      if (index >= 0) next[index] = row
+      else next.push(row)
+      return next
+    }
     case 'loong.approval_requested': {
       const r = v as unknown as ApprovalRequest
       if (!r.id) return next
@@ -264,7 +294,7 @@ export function fold(blocks: Block[], e: AgentEvent): Block[] {
       const label = String(v.label ?? '')
       const text = String(v.text ?? '')
       if (!label && !text) return next
-      next.push({ k: 'check', id: newId(), label: label || text, ok, at })
+      next.push({ k: 'check', id: newId(), label: label || text, ok, at, command: typeof v.command === 'string' ? v.command : undefined, output: typeof v.output === 'string' ? v.output : undefined, exitCode: typeof v.exitCode === 'number' ? v.exitCode : undefined, seconds: typeof v.seconds === 'number' ? v.seconds : undefined })
       return next
     }
     case 'loong.screenshot': {

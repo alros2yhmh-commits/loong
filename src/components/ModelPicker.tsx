@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'motion/react'
 import { api, type ModelInfo, type ProviderInfo } from '../lib/api'
+import { loadModelCatalog } from '../lib/model-catalog'
+import { useDialogFocus } from '../lib/dialog'
 
 /* ===========================================================================
    The model picker, in the composer.
@@ -18,16 +20,20 @@ export function ModelPicker({
   open,
   current,
   provider,
+  route = 'manual',
   onClose,
   onPick,
   onProvider,
+  onRoute,
 }: {
   open: boolean
   current: string
   provider: string
+  route?: 'auto' | 'manual'
   onClose: () => void
   onPick: (model: string) => void
   onProvider: (id: string) => void
+  onRoute?: (route: 'auto' | 'manual') => void
 }) {
   const [models, setModels] = useState<ModelInfo[]>([])
   const [providers, setProviders] = useState<ProviderInfo[]>([])
@@ -35,27 +41,38 @@ export function ModelPicker({
   const [custom, setCustom] = useState('')
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [stale, setStale] = useState(false)
   const input = useRef<HTMLInputElement>(null)
+  const dialog = useRef<HTMLDivElement>(null)
+  useDialogFocus(open, dialog, onClose)
 
   useEffect(() => {
     if (!open) return
+    let active = true
     setQ('')
     setCustom('')
     setBusy(true)
     setError(null)
-    void api.providers().then((r) => setProviders(r.providers ?? [])).catch(() => {})
-    void api
-      .models()
-      .then((r) => setModels(r.models ?? []))
-      .catch((e) => setError((e as Error).message))
-      .finally(() => setBusy(false))
-    requestAnimationFrame(() => input.current?.focus())
+    setModels([])
+    setStale(false)
+    void api.providers().then((r) => { if (active) setProviders(r.providers ?? []) }).catch(() => {})
+    void loadModelCatalog(provider)
+      .then((r) => {
+        if (!active) return
+        setModels(r.models)
+        setError(r.error ?? null)
+        setStale(r.stale === true)
+      })
+      .catch((e) => { if (active) setError((e as Error).message) })
+      .finally(() => { if (active) setBusy(false) })
+    const focus = requestAnimationFrame(() => input.current?.focus())
+    return () => { active = false; cancelAnimationFrame(focus) }
   }, [open, provider])
 
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase()
     const list = needle
-      ? models.filter((m) => (m.id ?? m.name ?? '').toLowerCase().includes(needle))
+      ? models.filter((m) => `${m.id} ${m.name ?? ''}`.toLowerCase().includes(needle))
       : models
     return list.slice(0, 80)
   }, [models, q])
@@ -65,10 +82,15 @@ export function ModelPicker({
   return (
     <div className="fixed inset-0 z-[76]" onMouseDown={onClose}>
       <motion.div
+        ref={dialog}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Choose a model"
+        tabIndex={-1}
         initial={{ opacity: 0, y: 6, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-        className="absolute w-[340px] overflow-hidden rounded-[14px]"
+        className="absolute w-[min(420px,calc(100vw-24px))] overflow-hidden rounded-[14px]"
         style={{
           right: 16,
           bottom: 92,
@@ -78,6 +100,10 @@ export function ModelPicker({
         }}
         onMouseDown={(e) => e.stopPropagation()}
       >
+        <div className="flex items-center justify-between gap-[10px] p-[10px]" style={{ borderBottom: '1px solid var(--line-1)' }}>
+          <span className="t-small" style={{ color: 'var(--text-1)' }}>Model selection</span>
+          <button type="button" className="ctl rounded-[6px] px-[7px] t-small" onClick={onClose} aria-label="Close model picker">×</button>
+        </div>
         <div className="flex flex-wrap gap-[3px] p-[7px]" style={{ borderBottom: '1px solid var(--line-1)' }}>
           {providers.map((pr) => (
             <button
@@ -97,6 +123,24 @@ export function ModelPicker({
             </button>
           ))}
         </div>
+
+        {onRoute && (
+          <div className="px-[10px] py-[8px]" style={{ borderBottom: '1px solid var(--line-1)' }}>
+            <div role="group" aria-label="Model routing" className="flex gap-[5px]">
+              {(['manual', 'auto'] as const).map((choice) => (
+                <button key={choice} type="button" aria-pressed={route === choice}
+                  className="ctl rounded-[6px] px-[9px] py-[4px] t-small"
+                  style={{ background: route === choice ? 'var(--surface-selected)' : 'transparent', border: '1px solid var(--line-2)' }}
+                  onClick={() => onRoute(choice)}>
+                  {choice === 'manual' ? 'Fixed model' : 'Auto fallback'}
+                </button>
+              ))}
+            </div>
+            <p className="m-0 mt-[6px] t-tiny leading-[1.5]" style={{ color: 'var(--text-3)' }}>
+              {route === 'manual' ? 'Keep the selected model. Retry errors without switching models.' : 'Allow compatible free alternatives when a free OpenRouter model is unavailable. Paid models stay fixed.'}
+            </p>
+          </div>
+        )}
 
         <div className="p-[8px]" style={{ borderBottom: '1px solid var(--line-1)' }}>
           <input
@@ -125,13 +169,14 @@ export function ModelPicker({
             </p>
           )}
           {error && (
-            <p className="m-0 px-[9px] py-[10px] t-small" style={{ color: 'var(--text-1)' }}>
-              {error}
+            <p role="status" className="m-0 px-[9px] py-[10px] t-small" style={{ color: 'var(--text-1)' }}>
+              {error}. You can still enter a model ID below.
             </p>
           )}
+          {stale && <p role="status" className="m-0 px-[9px] py-[6px] t-tiny" style={{ color: 'var(--amber)' }}>Showing a cached model list; live availability may have changed.</p>}
           {!busy && !error && shown.length === 0 && (
             <p className="m-0 px-[9px] py-[10px] t-small" style={{ color: 'var(--text-3)' }}>
-              Nothing matches. Type a name below.
+              {provider === 'custom' ? 'Enter the model ID used by your endpoint below.' : 'No models found. Enter a model ID below.'}
             </p>
           )}
           {shown.map((m) => {
@@ -150,9 +195,13 @@ export function ModelPicker({
                 <span className="mono min-w-0 flex-1 truncate t-small" style={{ color: 'var(--text-1)' }}>
                   {name}
                 </span>
+                {m.supportsTools === true || m.tools === true ? <span className="t-tiny shrink-0" style={{ color: 'var(--text-3)' }}>Tools</span> : null}
+                {m.free && <span className="t-tiny shrink-0" style={{ color: 'var(--ok)' }}>Free</span>}
+                {m.vision && <span className="t-tiny shrink-0" style={{ color: 'var(--text-3)' }} title="Accepts images">Images</span>}
+                {m.reasoning && <span className="t-tiny shrink-0" style={{ color: 'var(--text-3)' }} title="Reasoning model">Reasoning</span>}
                 {m.context ? (
                   <span className="t-tiny shrink-0" style={{ color: 'var(--text-4)' }}>
-                    {Math.round(m.context / 1000)}k
+                    {Math.round(m.context / 1000)}k context
                   </span>
                 ) : null}
                 {current === name && <span style={{ color: 'var(--text-1)' }}>✓</span>}
@@ -164,7 +213,7 @@ export function ModelPicker({
         {/* the last row: any name the provider accepts */}
         <div className="p-[8px]" style={{ borderTop: '1px solid var(--line-1)' }}>
           <p className="mono m-0 mb-[5px] t-tiny tracking-[0.1em] uppercase" style={{ color: 'var(--text-4)' }}>
-            Custom model
+            Model ID
           </p>
           <div className="flex items-center gap-[6px]">
             <input
@@ -176,7 +225,10 @@ export function ModelPicker({
                   onClose()
                 }
               }}
-              placeholder="type the model name…"
+              placeholder="provider/model-id"
+              dir="ltr"
+              autoCapitalize="none"
+              spellCheck={false}
               aria-label="Custom model name"
               className="mono min-w-0 flex-1 rounded-[8px] px-[9px] py-[5px] t-small outline-none"
               style={{ border: '1px solid var(--line-2)' }}
@@ -195,6 +247,9 @@ export function ModelPicker({
               Use
             </button>
           </div>
+          <p className="m-0 mt-[6px] t-tiny leading-[1.5]" style={{ color: 'var(--text-3)' }}>
+            Manually entered IDs use the provider’s capabilities. Verify tool support for coding tasks; a model name alone does not establish it.
+          </p>
         </div>
       </motion.div>
     </div>

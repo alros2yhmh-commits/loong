@@ -26,6 +26,8 @@ export interface StatusBarProps {
   graphFiles?: number | null
   /** open the inspect panel on a tab — the floor chips are shortcuts */
   onInspect?: (tab: 'graph' | 'security') => void
+  outcome?: string | null
+  connection?: 'connected' | 'reconnecting' | 'offline'
 }
 
 const PHASE_WORD: Record<string, string> = {
@@ -33,17 +35,20 @@ const PHASE_WORD: Record<string, string> = {
   streaming: 'writing',
   tool: 'running tool',
   waiting: 'waiting for you',
+  reconnecting: 'reconnecting',
 }
 
 export function StatusBar(p: StatusBarProps) {
-  const word = p.running ? (PHASE_WORD[p.phase ?? ''] ?? 'working') : 'idle'
+  const word = p.connection === 'offline' ? 'connection lost'
+    : p.connection === 'reconnecting' ? 'reconnecting'
+      : p.running ? (PHASE_WORD[p.phase ?? ''] ?? 'working') : p.outcome?.replaceAll('_', ' ') ?? 'ready'
   const folder = p.workspace
     ? (p.workspace.split(/[\\/]/).filter(Boolean).pop() ?? p.workspace)
     : 'no folder'
 
   return (
     <footer
-      className="flex h-[36px] shrink-0 items-center gap-[14px] px-[16px]"
+      className="status-floor flex h-[36px] shrink-0 items-center gap-[14px] overflow-x-auto whitespace-nowrap px-[16px]"
       style={{ background: 'var(--surface)', borderTop: '1px solid var(--line-1)' }}
     >
       <span className="flex items-center gap-[6px]">
@@ -116,6 +121,8 @@ export function StatusBar(p: StatusBarProps) {
       )}
 
       <span className="flex-1" />
+
+      {p.model && <span dir="ltr" className="mono max-w-[240px] shrink-0 truncate t-tiny" style={{ color: 'var(--text-3)' }} title={p.model}>{p.model}</span>}
 
       {p.health === false && (
         <span className="t-tiny" style={{ color: 'var(--text-3)' }} title="The agent process is not reachable">

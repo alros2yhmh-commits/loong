@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { api, type ProviderInfo, type Settings } from '../lib/api'
+import { useDialogFocus } from '../lib/dialog'
 
 /* ===========================================================================
    Settings.
@@ -45,6 +46,10 @@ export function SettingsPanel({
   health: boolean | null
 }) {
   const [pane, setPane] = useState('appearance')
+  const [direction, setDirection] = useState(() => {
+    try { return localStorage.getItem('loong.direction') === 'rtl' ? 'rtl' : 'ltr' }
+    catch { return 'ltr' }
+  })
   /* the status bar owns "connected"; the prop stays for the shell contract */
   void health
   const [providers, setProviders] = useState<ProviderInfo[]>([])
@@ -66,15 +71,7 @@ export function SettingsPanel({
   /* Escape is the way out of every surface in this app; the panel was the one
      that did not listen, so a keyboard user was trapped until they found Close */
   const panel = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    panel.current?.focus()
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  useDialogFocus(open, panel, onClose)
 
   if (!open) return null
 
@@ -206,6 +203,20 @@ export function SettingsPanel({
                         onChange={(v) => onChange({ reducedMotion: v })}
                         label="Reduced motion"
                       />
+                    </Row>
+                    <Row label="Layout direction" hint="Use a right-to-left workspace for Arabic. Code, paths and terminal output keep their left-to-right direction.">
+                      <select aria-label="Layout direction" value={direction}
+                        className="rounded-[7px] px-[10px] py-[6px] t-small"
+                        style={{ background: 'var(--raised)', border: '1px solid var(--line-2)' }}
+                        onChange={(event) => {
+                          const value = event.target.value
+                          setDirection(value)
+                          try { localStorage.setItem('loong.direction', value) } catch { /* local preference only */ }
+                          window.dispatchEvent(new Event('loong-direction'))
+                        }}>
+                        <option value="ltr">Left to right</option>
+                        <option value="rtl">العربية — من اليمين لليسار</option>
+                      </select>
                     </Row>
                   </>
                 )}

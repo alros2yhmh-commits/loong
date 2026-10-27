@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, type GitDiff } from '../lib/api'
 
 /* ===========================================================================
@@ -26,40 +26,57 @@ export function DiffPane({
   onClose,
   workspace,
   onCount,
+  embedded = false,
+  refreshKey,
 }: {
   onClose: () => void
   workspace: string | null
   /** how many files changed — the header badge reads this */
   onCount?: (n: number) => void
+  embedded?: boolean
+  refreshKey?: number
 }) {
   const [diff, setDiff] = useState<GitDiff | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(true)
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const [nonce, setNonce] = useState(0)
+  const [previews, setPreviews] = useState<Record<string, { content?: string; error?: string }>>({})
+  const [copyState, setCopyState] = useState<string | null>(null)
+  const previewRequests = useRef(new Map<string, AbortController>())
 
   useEffect(() => {
     setBusy(true)
     setError(null)
+    setDiff(null)
+    setPreviews({})
+    const request = new AbortController()
     void api
-      .gitDiff()
+      .gitDiff(request.signal)
       .then((r) => {
+        if (request.signal.aborted) return
         if (r.ok === false) setError(r.error ?? 'git did not answer')
         else setDiff(r)
       })
-      .catch((e) => setError((e as Error).message))
-      .finally(() => setBusy(false))
-  }, [nonce])
+      .catch((e) => { if (!request.signal.aborted) setError((e as Error).message) })
+      .finally(() => { if (!request.signal.aborted) setBusy(false) })
+    return () => {
+      request.abort()
+      for (const preview of previewRequests.current.values()) preview.abort()
+      previewRequests.current.clear()
+    }
+  }, [nonce, workspace, refreshKey])
 
   /* Escape is the way out of every surface; the header button was the only
      way out of this one */
   useEffect(() => {
+    if (embedded) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [onClose, embedded])
 
   const files = diff?.files ?? []
   const patches = useMemo(() => splitPatch(diff?.diff ?? ''), [diff])
@@ -72,18 +89,40 @@ export function DiffPane({
     onCount?.(files.length)
   }, [files.length, onCount])
 
-  const copyPatch = () => {
+  const copyPatch = async () => {
     const text = diff?.diff ?? ''
     if (!text) return
-    void navigator.clipboard?.writeText(text).catch(() => {})
+    try {
+      if (!navigator.clipboard) throw new Error('Clipboard access is unavailable in this window.')
+      await navigator.clipboard.writeText(text)
+      setCopyState('Patch copied')
+    } catch (error) { setCopyState(error instanceof Error ? error.message : 'Could not copy the patch.') }
+  }
+
+  const toggleFile = (path: string, hasPatch: boolean) => {
+    const expanded = open[path] ?? false
+    setOpen((previous) => ({ ...previous, [path]: !expanded }))
+    if (expanded || hasPatch || previews[path]) return
+    setPreviews((previous) => ({ ...previous, [path]: {} }))
+    const request = new AbortController()
+    previewRequests.current.set(path, request)
+    void api.files(path, request.signal).then(({ content }) => {
+      if (request.signal.aborted) return
+      setPreviews((previous) => ({ ...previous, [path]: { content } }))
+    }).catch((error) => {
+      if (request.signal.aborted) return
+      setPreviews((previous) => ({ ...previous, [path]: { error: error instanceof Error ? error.message : 'Could not read this file.' } }))
+    }).finally(() => {
+      if (previewRequests.current.get(path) === request) previewRequests.current.delete(path)
+    })
   }
 
   return (
     <div
-      role="dialog"
-      aria-modal="true"
+      role={embedded ? 'region' : 'dialog'}
+      aria-modal={embedded ? undefined : true}
       aria-label="Changes"
-      className="absolute inset-0 z-50 flex flex-col"
+      className={embedded ? 'flex h-full min-h-0 flex-col' : 'absolute inset-0 z-50 flex flex-col'}
       style={{ background: 'var(--canvas)' }}
     >
       {/* The native min / max / close buttons are painted over the top-right
@@ -91,10 +130,10 @@ export function DiffPane({
           own buttons under them, so the header stops 146px short — the same
           inset the title bar uses. */}
       <header
-        className="flex h-[46px] shrink-0 items-center gap-[10px] pl-[12px] pr-[146px]"
+        className={`flex h-[46px] shrink-0 items-center gap-[10px] pl-[12px] ${embedded ? 'pr-[12px]' : 'pr-[146px]'}`}
         style={{ borderBottom: '1px solid var(--line-1)' }}
       >
-        <button
+        {!embedded && <button
           type="button"
           className="ctl grid h-[26px] w-[26px] shrink-0 place-items-center rounded-[6px]"
           style={{ border: '1px solid var(--line-2)', color: 'var(--text-2)' }}
@@ -111,7 +150,7 @@ export function DiffPane({
               strokeLinejoin="round"
             />
           </svg>
-        </button>
+        </button>}
         <h2 className="display m-0 shrink-0 t-h3">Changes</h2>
         <span className="mono shrink-0 t-tiny" style={{ color: 'var(--text-3)' }}>
           +{added} −{removed}
@@ -145,7 +184,7 @@ export function DiffPane({
           type="button"
           className="ctl grid h-[26px] w-[26px] shrink-0 place-items-center rounded-[6px] disabled:opacity-40"
           style={{ border: '1px solid var(--line-2)', color: 'var(--text-2)' }}
-          onClick={copyPatch}
+          onClick={() => void copyPatch()}
           disabled={!diff?.diff}
           aria-label="Copy the patch"
           title="Copy the unified diff"
@@ -157,6 +196,7 @@ export function DiffPane({
         </button>
       </header>
 
+      {copyState && <p role="status" className="m-0 px-[14px] py-[7px] t-tiny" style={{ color: 'var(--text-3)' }}>{copyState}</p>}
       <div className="min-h-0 flex-1 overflow-y-auto">
         {busy && (
           <p className="px-[24px] pt-[16px] t-small" style={{ color: 'var(--text-3)' }}>
@@ -192,22 +232,29 @@ export function DiffPane({
                   <button
                     type="button"
                     className="ctl flex w-full items-center gap-[10px] px-[24px] py-[9px] text-left"
-                    onClick={() => setOpen((prev) => ({ ...prev, [f.path]: !expanded }))}
+                    onClick={() => toggleFile(f.path, Boolean(patch))}
                     aria-expanded={expanded}
                     aria-label={`${expanded ? 'Hide' : 'Show'} the patch for ${f.path}`}
                   >
                     <span className="mono w-[10px] shrink-0 t-tiny" style={{ color: 'var(--text-4)' }}>
-                      {patch ? (expanded ? '▾' : '▸') : ''}
+                      {expanded ? '▾' : '▸'}
                     </span>
-                    <span className="mono min-w-0 flex-1 truncate t-small" style={{ color: 'var(--text-1)' }}>
+                    <span dir="ltr" className="mono min-w-0 flex-1 truncate t-small" style={{ color: 'var(--text-1)' }}>
                       {f.path}
                     </span>
+                    {!patch && <span className="t-tiny" style={{ color: 'var(--text-3)' }}>File preview</span>}
                     <span className="mono t-tiny shrink-0" style={{ color: 'var(--text-3)' }}>
                       +{f.added} −{f.removed}
                     </span>
                   </button>
+                  {expanded && !patch && <div className="px-[24px] pb-[14px]">
+                    <p className="m-0 mb-[6px] t-tiny" style={{ color: 'var(--text-3)' }}>No unified patch was provided for this file. Current content is shown below when readable.</p>
+                    {previews[f.path]?.error ? <p role="alert" className="m-0 t-small" style={{ color: 'var(--fail)' }}>{previews[f.path].error}</p>
+                      : previews[f.path]?.content !== undefined ? <pre dir="ltr" className="evidence-code" tabIndex={0}>{previews[f.path].content!.length > 20_000 ? previews[f.path].content!.slice(0, 20_000) + '\n… preview truncated' : previews[f.path].content || '(empty file)'}</pre>
+                        : <p role="status" className="m-0 t-tiny">Reading file…</p>}
+                  </div>}
                   {expanded && patch && (
-                    <pre
+                    <pre dir="ltr"
                       className="mono m-0 overflow-x-auto px-[24px] pb-[14px] t-code"
                       style={{ color: 'var(--text-2)' }}
                     >

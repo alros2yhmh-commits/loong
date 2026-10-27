@@ -7,6 +7,7 @@ import { api, type ApprovalRequest, type Plan, type PlanStep, type QuestionReque
 import { splitToolCalls, toolSummary, type Block } from '../lib/blocks'
 import { TRANSCRIPT_PAGE, TRANSCRIPT_TAIL, windowBlocks } from '../lib/window'
 import { Dragon, Working } from './Dragon'
+import { outcomeLabel } from '../lib/evidence'
 import { t, e, rise, card, collapse, stagger } from '../lib/motion'
 
 /* ===========================================================================
@@ -28,8 +29,8 @@ export interface TranscriptProps {
   view: 'normal' | 'thinking' | 'verbose'
   running: boolean
   phase?: string | null
-  onDecide: (id: string, approved: boolean) => void
-  onAnswer: (id: string, answer: string | null) => void
+  onDecide: (id: string, approved: boolean) => Promise<void>
+  onAnswer: (id: string, answer: string | null) => Promise<void>
   onRetry: () => void
   bare?: boolean
 }
@@ -137,7 +138,7 @@ function RailRow({
 
 function Code({ text, tone = 3, max = 2400 }: { text: string; tone?: 2 | 3; max?: number }) {
   return (
-    <pre
+    <pre dir="ltr"
       className="mono m-0 overflow-x-auto rounded-[7px] px-[10px] py-[8px] t-code"
       style={{
         background: 'var(--canvas)',
@@ -347,9 +348,22 @@ function ApprovalCard({
   onDecide,
 }: {
   request: ApprovalRequest
-  onDecide: (id: string, approved: boolean) => void
+  onDecide: (id: string, approved: boolean) => Promise<void>
 }) {
   const [decided, setDecided] = useState<boolean | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const decide = async (approved: boolean) => {
+    if (submitting) return
+    setSubmitting(true)
+    setError(null)
+    try {
+      await onDecide(request.id, approved)
+      setDecided(approved)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The decision was not delivered. Please retry.')
+    } finally { setSubmitting(false) }
+  }
   const files = Array.isArray(request.files) ? request.files : []
 
   return (
@@ -406,33 +420,30 @@ function ApprovalCard({
           </div>
         )}
 
+        {error && <p role="alert" className="m-0 mt-[8px] t-small" style={{ color: 'var(--fail)' }}>{error} Your decision has not been confirmed; try again.</p>}
         {decided === null ? (
           <div className="mt-[12px] flex items-center gap-[7px]">
             <button
               type="button"
               className="ctl rounded-[7px] px-[14px] py-[6px] t-small"
               style={{ background: 'var(--btn)', color: 'var(--btn-text)' }}
-              onClick={() => {
-                setDecided(true)
-                onDecide(request.id, true)
-              }}
+              disabled={submitting}
+              onClick={() => void decide(true)}
             >
-              Approve
+              {submitting ? 'Sending…' : 'Approve'}
             </button>
             <button
               type="button"
               className="ctl rounded-[7px] px-[14px] py-[6px] t-small"
               style={{ border: '1px solid var(--line-3)', color: 'var(--text-2)' }}
-              onClick={() => {
-                setDecided(false)
-                onDecide(request.id, false)
-              }}
+              disabled={submitting}
+              onClick={() => void decide(false)}
             >
               Decline
             </button>
             <span className="flex-1" />
             <span className="t-tiny" style={{ color: 'var(--text-3)' }}>
-              the run is parked until you decide
+              {submitting ? 'waiting for server confirmation' : 'the run is parked until you decide'}
             </span>
           </div>
         ) : (
@@ -457,10 +468,20 @@ function QuestionCard({
   onAnswer,
 }: {
   request: QuestionRequest
-  onAnswer: (id: string, answer: string | null) => void
+  onAnswer: (id: string, answer: string | null) => Promise<void>
 }) {
   const [text, setText] = useState('')
   const [done, setDone] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const answer = async (value: string | null) => {
+    if (submitting) return
+    setSubmitting(true)
+    setError(null)
+    try { await onAnswer(request.id, value); setDone(value ?? '') }
+    catch (err) { setError(err instanceof Error ? err.message : 'The answer was not delivered. Please retry.') }
+    finally { setSubmitting(false) }
+  }
 
   if (done !== null) {
     return (
@@ -500,28 +521,28 @@ function QuestionCard({
               type="button"
               className="ctl rounded-[6px] px-[10px] py-[5px] t-small"
               style={{ border: '1px solid var(--line-2)', color: 'var(--text-1)' }}
-              onClick={() => {
-                setDone(o)
-                onAnswer(request.id, o)
-              }}
+              disabled={submitting}
+              onClick={() => void answer(o)}
             >
               {o}
             </button>
           ))}
         </div>
       )}
+      {error && <p role="alert" className="m-0 mt-[8px] t-small" style={{ color: 'var(--fail)' }}>{error} Please retry.</p>}
       <div className="mt-[9px] flex items-center gap-[7px]">
         <input
           value={text}
           onChange={(ev) => setText(ev.target.value)}
           onKeyDown={(ev) => {
             if (ev.key === 'Enter' && text.trim()) {
-              setDone(text.trim())
-              onAnswer(request.id, text.trim())
+              void answer(text.trim())
             }
           }}
           placeholder="Type an answer…"
           aria-label="Answer"
+          dir="auto"
+          disabled={submitting}
           className="min-w-0 flex-1 rounded-[7px] px-[10px] py-[6px] t-small outline-none"
           style={{ background: 'var(--canvas)', border: '1px solid var(--line-2)' }}
         />
@@ -529,10 +550,8 @@ function QuestionCard({
           type="button"
           className="ctl rounded-[7px] px-[10px] py-[6px] t-small"
           style={{ color: 'var(--text-3)' }}
-          onClick={() => {
-            setDone('')
-            onAnswer(request.id, null)
-          }}
+          disabled={submitting}
+          onClick={() => void answer(null)}
         >
           Skip
         </button>
@@ -833,13 +852,12 @@ export function Transcript(p: TranscriptProps) {
                   <RailRow
                     state="done"
                     label={<span className="mono">tool call written as text — no tool ran</span>}
-                    meta="this model cannot emit tool calls"
+                    meta="not an executed tool call"
                   >
                     <p className="m-0 mb-[6px] t-small leading-[1.55]" style={{ color: 'var(--text-2)' }}>
-                      This endpoint's model writes the call into the message instead of
-                      emitting a real tool call, so the agent had nothing to execute and the
-                      run ended after one step. Switch to a model that supports tool calling —
-                      a local one, or a hosted one with a function-calling API.
+                      This response described a tool call as text; it did not execute that call.
+                      Check that the selected model and endpoint support tool calling, or retry
+                      with another tool-capable model.
                     </p>
                     <Code text={calls} tone={3} max={3000} />
                   </RailRow>
@@ -924,7 +942,7 @@ export function Transcript(p: TranscriptProps) {
               )
             }
             return (
-              <motion.div key={b.id} variants={rise} initial="initial" animate="animate">
+              <motion.div key={b.id} data-tool-call-id={b.id} variants={rise} initial="initial" animate="animate">
                 <RailRow
                   state={b.live ? 'live' : b.ok === false ? 'failed' : 'done'}
                   label={
@@ -1054,6 +1072,25 @@ export function Transcript(p: TranscriptProps) {
 
           case 'findings':
             return <FindingsCard key={b.id} b={b} />
+
+          case 'outcome':
+            return (
+              <motion.section key={b.id} variants={rise} initial="initial" animate="animate"
+                aria-label="Task result" className="rounded-[10px] p-[13px]"
+                style={{ background: 'var(--raised)', border: '1px solid var(--line-2)' }}>
+                <div className="flex flex-wrap items-center gap-[8px]">
+                  <strong className="t-small" style={{ color: b.status === 'completed' ? 'var(--ok)' : b.status === 'failed' ? 'var(--fail)' : 'var(--amber)' }}>
+                    {outcomeLabel(b.status)}
+                  </strong>
+                  {b.model && <span dir="ltr" className="mono t-tiny min-w-0 truncate" title={b.model} style={{ color: 'var(--text-3)' }}>{b.model}</span>}
+                </div>
+                {b.reason && <p dir="auto" className="bidi m-0 mt-[6px] t-small leading-[1.65]" style={{ color: 'var(--text-2)' }}>{b.reason}</p>}
+                {b.status !== 'completed' && b.status !== 'cancelled' && <button type="button" onClick={p.onRetry}
+                  className="ctl mt-[9px] rounded-[7px] px-[10px] py-[5px] t-small" style={{ border: '1px solid var(--line-3)', color: 'var(--text-1)' }}>
+                  Continue from this state
+                </button>}
+              </motion.section>
+            )
 
           case 'failed':
             return (

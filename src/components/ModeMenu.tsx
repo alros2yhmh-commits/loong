@@ -1,5 +1,6 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { motion } from 'motion/react'
+import { useDialogFocus } from '../lib/dialog'
 import { t, e } from '../lib/motion'
 import type { Mode, Trust } from './Composer'
 
@@ -46,7 +47,7 @@ const CHOICES: Choice[] = [
   },
   {
     label: 'Full trust',
-    detail: 'Writes run without asking. The confidence gate still parks what it doubts.',
+    detail: 'Runs permitted edits and commands without asking. Workspace and safety limits still apply.',
     mode: 'agent',
     trust: 'auto',
     glyph: ICON('M8 2.2v11.6M2.2 8h11.6'),
@@ -75,6 +76,8 @@ export function ModeMenu({
   onPick: (mode: Mode, trust: Trust) => void
   anchor?: { x: number; y: number } | null
 }) {
+  const panel = useRef<HTMLDivElement>(null)
+  useDialogFocus(open, panel, onClose)
   /* keys work only while this menu holds the focus — a listener on the window
      is a listener on the whole app, and typing "2" in the composer must not
      change your permission mode */
@@ -110,8 +113,9 @@ export function ModeMenu({
     <div className="fixed inset-0 z-[75]" onMouseDown={onClose}>
       <motion.div
         data-mode-menu
+        role="dialog" aria-modal="true" aria-label="Permission mode"
         tabIndex={-1}
-        ref={(el) => el?.focus()}
+        ref={panel}
         initial={{ opacity: 0, y: 8, scale: 0.97 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ duration: t.base, ease: e.out }}
@@ -138,6 +142,7 @@ export function ModeMenu({
             <button
               key={c.label}
               type="button"
+              aria-pressed={current}
               onClick={() => {
                 onPick(c.mode, c.trust)
                 onClose()
