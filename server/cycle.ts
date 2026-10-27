@@ -27,6 +27,9 @@ export interface CycleEvent {
   tool: string
   ok: boolean
   input?: Record<string, unknown>
+  /** Explicit evidence can override a tool name for read-only scripts. */
+  changed?: boolean
+  verified?: boolean
 }
 
 export interface CycleState {
@@ -40,6 +43,8 @@ export interface CycleState {
   failures: number
   /** timestamps: the stop gate compares them */
   lastWriteAt: number
+  lastWriteStep: number
+  lastVerifyOkStep: number
   lastVerifyOkAt: number
   startedAt: number
   history: { phase: Phase; at: number; reason: string }[]
@@ -100,6 +105,8 @@ export function createCycle(now = Date.now()): CycleState {
     verifications: 0,
     failures: 0,
     lastWriteAt: 0,
+    lastWriteStep: 0,
+    lastVerifyOkStep: 0,
     lastVerifyOkAt: 0,
     startedAt: now,
     history: [{ phase: 'intake', at: now, reason: 'run started' }],
@@ -125,20 +132,28 @@ export function observe(state: CycleState, ev: CycleEvent, now = Date.now()): Ph
   state.step += 1
   const name = ev.tool
   const isRead = READ_TOOLS.has(name)
-  const isWrite = WRITE_TOOLS.has(name)
+  const isWrite = ev.changed ?? WRITE_TOOLS.has(name)
   const isShellCheck =
     name === 'shell' && CHECK_COMMAND.test(String(ev.input?.command ?? ''))
-  const isVerify = VERIFY_TOOLS.has(name) || isShellCheck
+  const isVerify = ev.verified ?? (VERIFY_TOOLS.has(name) || isShellCheck)
 
   if (isRead) state.reads += 1
-  if (isWrite) {
+  if (isWrite && ev.ok) {
     state.writes += 1
     state.lastWriteAt = now
+    state.lastWriteStep = state.step
   }
   if (isVerify) {
     state.verifications += 1
-    if (ev.ok) state.lastVerifyOkAt = now
-    else state.failures += 1
+    if (ev.ok) {
+      state.lastVerifyOkAt = now
+      state.lastVerifyOkStep = state.step
+    }
+    else {
+      state.failures += 1
+      state.lastVerifyOkStep = 0
+      state.lastVerifyOkAt = 0
+    }
   }
 
   if (!ev.ok) {
@@ -183,9 +198,21 @@ export function observe(state: CycleState, ev: CycleEvent, now = Date.now()): Ph
   }
 }
 
+/** Legacy tools return strings; never count an error/no-run message as proof. */
+export function toolResultSucceeded(output: unknown): boolean {
+  if (output && typeof output === 'object') {
+    const result = output as { ok?: boolean; error?: unknown; status?: string }
+    if (result.ok === false || result.error || result.status === 'failed') return false
+    return true
+  }
+  const text = String(output ?? '').trim()
+  return text.length > 0 && !/^(?:Refused(?:[: —-]|$)|Permission was not granted|The user (?:denied|declined)|A project hook refused|Command (?:failed|timed out)|(?:Fetch|Request|Browser|Context7|Tool) failed|Could not |Audit rejected|[^\n]+ is blocked:|No (?:test runner|build script|TypeScript config|such directory)|This project has no recognisable checks)/i.test(text) &&
+    !/(?:^|\n)(?:[^\n]{0,40}\bFAILED\b|\[exit(?: code)?[=: ]+[1-9]\d*\])/i.test(text)
+}
+
 /** true when this run changed something and never proved it works */
 export function missingEvidence(state: CycleState): boolean {
-  return state.writes > 0 && state.lastVerifyOkAt < state.lastWriteAt
+  return state.writes > 0 && state.lastVerifyOkStep < state.lastWriteStep
 }
 
 /** the one turn the stop gate adds when a run tries to finish on a claim */

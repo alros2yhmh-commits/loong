@@ -1,4 +1,6 @@
-import { asSchema, streamText, type LanguageModel, type ToolSet } from 'ai'
+import { asSchema, streamText, tool, type LanguageModel, type ToolSet } from 'ai'
+import { z } from 'zod'
+import { compactHistory, contextChars } from '../context.ts'
 import { EventType, type BaseEvent } from '@ag-ui/core'
 import { callProviderOptions, type ProviderConfig } from '../providers.ts'
 import { ThinkFilter } from '../think.ts'
@@ -38,9 +40,12 @@ export interface KernelPassOptions {
   turns: HistoryTurn[]
   /** model calls this pass may make */
   maxSteps: number
+  maxOutputTokens?: number
+  contextWindowTokens?: number
   abortSignal?: AbortSignal
   emit: (event: BaseEvent) => void
   onStep?: () => void
+  onCheckpoint?: (history: HistoryTurn[]) => void
   onNotice?: (text: string) => void
   /** the repetition guard, owned by the caller */
   checkLoop?: (text: string) => boolean
@@ -61,6 +66,7 @@ export interface KernelPassResult {
   usage: { inputTokens?: number; outputTokens?: number } | null
   /** the run's canonical transcript, so the next pass sees what this one did */
   history: HistoryTurn[]
+  actualModel?: string
 }
 
 /** enough for a long codegen answer; a provider pre-reserves it against the
@@ -216,8 +222,8 @@ function offeredTools(tools: ToolSet): ToolSet {
 export async function runKernelPass(opts: KernelPassOptions): Promise<KernelPassResult> {
   const { runId, threadId, emit } = opts
   const think = new ThinkFilter()
-  const textId = `msg-${runId}`
-  const reasoningId = `rsn-${runId}`
+  let textId = `msg-${runId}-0`
+  let reasoningId = `rsn-${runId}-0`
   let textOpen = false
   let reasoningOpen = false
   let produced = false
@@ -228,6 +234,7 @@ export async function runKernelPass(opts: KernelPassOptions): Promise<KernelPass
   let stepLimit = false
   const usageAcc = { input: 0, output: 0 }
   let overflowed = false
+  let actualModel: string | undefined
 
   /* the run's transcript, in Loong's shape — the caller keeps it across passes */
   const turns: HistoryTurn[] = opts.turns.map((turn) => ({ ...turn }))
@@ -257,14 +264,38 @@ export async function runKernelPass(opts: KernelPassOptions): Promise<KernelPass
     emit({ type: EventType.REASONING_END, messageId: reasoningId, ...base(runId, threadId) } as BaseEvent)
   }
 
-  const offered = offeredTools(opts.tools)
-  const executable = opts.tools as Record<
+  const allOffered = offeredTools(opts.tools)
+  const core = new Set(['list_dir', 'read_file', 'read_many', 'grep', 'search_many', 'project_overview',
+    'graph_map', 'write_file', 'edit_file', 'multi_edit', 'edit_many', 'propose_changes', 'shell',
+    'terminal', 'run_code', 'update_plan', 'run_verification', 'run_project', 'ask_user', 'audit'])
+  const useDiscovery = Object.keys(allOffered).length > 28
+  const offered = useDiscovery
+    ? Object.fromEntries(Object.entries(allOffered).filter(([name]) => core.has(name))) as ToolSet
+    : { ...allOffered }
+  const executable = { ...opts.tools } as Record<
     string,
     {
       inputSchema?: unknown
       execute?: (input: unknown, context: { toolCallId: string }) => unknown
     }
   >
+
+  if (useDiscovery) {
+    const discover = tool({
+      description: 'Find and activate additional tools by name or capability. Call before using a tool outside the core set.',
+      inputSchema: z.object({ query: z.string().min(1) }),
+      execute: async ({ query }: { query: string }) => {
+        const terms = query.toLowerCase().split(/[\s,]+/).filter(Boolean)
+        const matches = Object.entries(allOffered).filter(([name, def]) =>
+          terms.some((term) => `${name} ${def.description ?? ''}`.toLowerCase().includes(term))).slice(0, 12)
+        for (const [name, def] of matches) offered[name] = def
+        return matches.length ? matches.map(([name, def]) => `${name}: ${def.description}`).join('\n')
+          : `No matching tools. Available names: ${Object.keys(allOffered).join(', ')}`
+      },
+    })
+    offered.discover_tools = discover
+    executable.discover_tools = discover as never
+  }
 
   /* run one call through Loong's wrapper — approvals, leases, hooks and the
      cycle all live inside it, so the kernel never re-implements a gate */
@@ -315,7 +346,8 @@ export async function runKernelPass(opts: KernelPassOptions): Promise<KernelPass
         toolCallId: call.toolCallId,
         toolName: call.toolName,
         output: textOf(raw),
-        ok: true,
+        ok: !((raw && typeof raw === 'object' && (raw as { ok?: boolean }).ok === false) ||
+          /(?:^|\n)(?:Refused\b|Denied\b|Command failed\b|Command timed out\b|Tool failed:|Error:|The user denied|The tool failed)/i.test(textOf(raw))),
       }
     } catch (err) {
       return {
@@ -362,17 +394,32 @@ export async function runKernelPass(opts: KernelPassOptions): Promise<KernelPass
     if (opts.abortSignal?.aborted) break
     ageImages()
     steps += 1
+    textId = `msg-${runId}-${steps}`
+    reasoningId = `rsn-${runId}-${steps}`
     opts.onStep?.()
     emit({ type: EventType.STEP_STARTED, stepName: 'step', ...base(runId, threadId) } as BaseEvent)
 
     let stepText = ''
-    const calls: { toolCallId: string; toolName: string; input: unknown }[] = []
+    const calls: NonNullable<HistoryTurn['toolCalls']> = []
+    const reasoning: NonNullable<HistoryTurn['reasoning']> = []
+    let activeReasoning: NonNullable<HistoryTurn['reasoning']>[number] | undefined
 
     try {
+      const system = opts.system() + (useDiscovery ? '\nAdditional tools are available through discover_tools: ' + Object.keys(allOffered).filter((name) => !core.has(name)).join(', ') : '')
+      const maxOutputTokens = Math.max(256, Math.min(32_768, opts.maxOutputTokens ?? MAX_OUTPUT_TOKENS))
+      const toolChars = JSON.stringify(await Promise.all(Object.values(offered).map(async (def) =>
+        ({ description: def.description, schema: await asSchema(def.inputSchema as never).jsonSchema })))).length
+      const maxChars = opts.contextWindowTokens
+        ? Math.max(4_000, Math.min(240_000, (opts.contextWindowTokens - maxOutputTokens) * 3 - system.length - toolChars))
+        : undefined
+      const outgoing = compactHistory(turns, { maxChars, aggressive: overflowed })
+      if (contextChars(outgoing) < contextChars(turns) * 0.75) {
+        opts.onNotice?.('Context compacted: the request and recent work were retained while older tool output was shortened.')
+      }
       const result = streamText({
         model: opts.model,
-        system: opts.system(),
-        messages: toModelMessages(turns),
+        system,
+        messages: toModelMessages(outgoing),
         ...(Object.keys(offered).length > 0 ? { tools: offered } : {}),
         abortSignal: opts.abortSignal,
         /* the caller's attempt loop owns retries and decides which faults are
@@ -383,7 +430,7 @@ export async function runKernelPass(opts: KernelPassOptions): Promise<KernelPass
            and classified by the caller; this is not a second opinion. */
         onError: () => {},
         temperature: 0.2,
-        maxOutputTokens: MAX_OUTPUT_TOKENS,
+        maxOutputTokens,
         providerOptions: callProviderOptions(opts.config) as never,
       })
 
@@ -404,14 +451,23 @@ export async function runKernelPass(opts: KernelPassOptions): Promise<KernelPass
             repetition = true
             break
           }
+        } else if (part.type === 'reasoning-start') {
+          activeReasoning = { text: '', ...(part.providerMetadata ? { providerOptions: part.providerMetadata } : {}) }
+          reasoning.push(activeReasoning)
+        } else if (part.type === 'reasoning-end') {
+          if (activeReasoning && part.providerMetadata) activeReasoning.providerOptions = part.providerMetadata
+          activeReasoning = undefined
         } else if (part.type === 'reasoning-delta') {
           produced = true
+          if (!activeReasoning) { activeReasoning = { text: '' }; reasoning.push(activeReasoning) }
+          activeReasoning.text += part.text
+          if (part.providerMetadata) activeReasoning.providerOptions = part.providerMetadata
           openReasoning()
           emit({ type: EventType.REASONING_MESSAGE_CONTENT, messageId: reasoningId, delta: part.text, ...base(runId, threadId) } as BaseEvent)
         } else if (part.type === 'tool-call') {
           produced = true
           closeReasoning()
-          calls.push({ toolCallId: part.toolCallId, toolName: part.toolName, input: part.input })
+          calls.push({ toolCallId: part.toolCallId, toolName: part.toolName, input: part.input, ...(part.providerMetadata ? { providerOptions: part.providerMetadata } : {}) })
         } else if (part.type === 'error') {
           throw part.error instanceof Error ? part.error : new Error(messageOf(part.error))
         } else if (part.type === 'finish') {
@@ -424,6 +480,8 @@ export async function runKernelPass(opts: KernelPassOptions): Promise<KernelPass
           }
         }
       }
+      const response = await result.response
+      actualModel = response.modelId ?? actualModel
     } catch (err) {
       if (opts.abortSignal?.aborted) {
         closeText()
@@ -446,9 +504,8 @@ export async function runKernelPass(opts: KernelPassOptions): Promise<KernelPass
          turns and ask again — with the transcript intact, not from zero */
       if (!overflowed && isOverflow(message) && turns.length > 6) {
         overflowed = true
-        const head = turns.slice(0, 1)
-        const tail = turns.slice(-6)
-        turns.splice(0, turns.length, ...head, ...tail)
+        // Retry from a smaller model-facing checkpoint; canonical history stays intact.
+        // Compaction is applied again at the start of the next iteration.
         opts.onNotice?.('The conversation outgrew the model context — older turns were compacted and the run continued.')
         steps -= 1
         continue
@@ -473,9 +530,9 @@ export async function runKernelPass(opts: KernelPassOptions): Promise<KernelPass
       /* the half-sentence that looped is not an answer, but the calls it made
          before looping did happen — keep the transcript honest */
       if (calls.length > 0) {
-        turns.push({ role: 'assistant', content: stepText, toolCalls: calls })
+        turns.push({ role: 'assistant', content: stepText, reasoning, toolCalls: calls })
       } else if (stepText.trim()) {
-        turns.push({ role: 'assistant', content: stepText })
+        turns.push({ role: 'assistant', content: stepText, reasoning })
       }
       return {
         ok: false,
@@ -493,13 +550,14 @@ export async function runKernelPass(opts: KernelPassOptions): Promise<KernelPass
 
     /* the model said something and asked for nothing: the turn is over */
     if (calls.length === 0) {
-      if (stepText.trim()) turns.push({ role: 'assistant', content: stepText })
+      if (stepText.trim() || reasoning.length > 0) turns.push({ role: 'assistant', content: stepText, reasoning })
+      opts.onCheckpoint?.(turns)
       break
     }
 
     /* the assistant turn goes into the transcript BEFORE the tools run, so a
        result always answers a call the conversation already contains */
-    turns.push({ role: 'assistant', content: stepText, toolCalls: calls })
+    turns.push({ role: 'assistant', content: stepText, reasoning, toolCalls: calls })
     for (const call of calls) {
       emit({ type: EventType.TOOL_CALL_START, toolCallId: call.toolCallId, toolCallName: call.toolName, ...base(runId, threadId) } as BaseEvent)
       emit({ type: EventType.TOOL_CALL_ARGS, toolCallId: call.toolCallId, delta: JSON.stringify(call.input ?? {}), ...base(runId, threadId) } as BaseEvent)
@@ -532,6 +590,7 @@ export async function runKernelPass(opts: KernelPassOptions): Promise<KernelPass
     }
 
     turns.push({ role: 'tool', content: '', toolResults: results })
+    opts.onCheckpoint?.(turns)
 
     if (opts.abortSignal?.aborted) break
     /* the ceiling was reached with the model still asking for tools: the task
@@ -573,5 +632,6 @@ export async function runKernelPass(opts: KernelPassOptions): Promise<KernelPass
     stepLimit,
     usage: usageOrNull(),
     history: turns,
+    actualModel,
   }
 }

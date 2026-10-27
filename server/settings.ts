@@ -37,7 +37,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   provider: 'ollama',
   model: '',
-  route: 'auto',
+  route: 'manual',
   mode: 'agent',
   trust: 'ask',
   soundEnabled: false,
@@ -70,7 +70,7 @@ function load(): SettingsStore {
     const parsed = JSON.parse(raw) as Partial<SettingsStore>
     if (!parsed || typeof parsed !== 'object') throw new Error('unexpected shape')
     return {
-      settings: { ...DEFAULT_SETTINGS, ...(parsed.settings ?? {}) },
+      settings: clean({ ...DEFAULT_SETTINGS, ...(parsed.settings ?? {}), ...(parsed.settings?.mode === 'plan' ? { mode: 'agent' } : {}) }),
       folders: parsed.folders && typeof parsed.folders === 'object' ? parsed.folders : {},
     }
   } catch (err) {
@@ -89,7 +89,11 @@ function load(): SettingsStore {
 let store: SettingsStore = load()
 
 function flush(): void {
-  const body = JSON.stringify(store)
+  /* Plan is a temporary interaction mode, not a restart default. */
+  const body = JSON.stringify({
+    ...store,
+    settings: { ...store.settings, mode: store.settings.mode === 'plan' ? 'agent' : store.settings.mode },
+  })
   const tmp = `${PATH}.tmp`
   try {
     writeFileSync(tmp, body, 'utf8')
@@ -113,15 +117,17 @@ function flush(): void {
    coerced to its type and clamped to its range, and an unknown value falls
    back to the default rather than being stored. */
 
-const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n))
+function clamp(n: number, lo: number, hi: number): number {
+  return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : lo
+}
 
 function clean(input: unknown): Settings {
   const raw = (input ?? {}) as Record<string, unknown>
   const pick = <T>(v: unknown, allowed: readonly T[], fallback: T): T =>
     allowed.includes(v as T) ? (v as T) : fallback
   return {
-    provider: typeof raw.provider === 'string' ? raw.provider.slice(0, 60) : DEFAULT_SETTINGS.provider,
-    model: typeof raw.model === 'string' ? raw.model.slice(0, 120) : DEFAULT_SETTINGS.model,
+    provider: pick(raw.provider, ['ollama', 'openrouter', 'anthropic', 'openai', 'google', 'custom'], DEFAULT_SETTINGS.provider),
+    model: typeof raw.model === 'string' ? raw.model.trim().slice(0, 256) : DEFAULT_SETTINGS.model,
     route: pick(raw.route, ['auto', 'manual'] as const, DEFAULT_SETTINGS.route),
     mode: pick(raw.mode, ['ask', 'plan', 'agent'] as const, DEFAULT_SETTINGS.mode),
     trust: pick(raw.trust, ['ask', 'auto'] as const, DEFAULT_SETTINGS.trust),

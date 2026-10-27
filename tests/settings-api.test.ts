@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -89,6 +89,7 @@ test('G1: settings persist and survive a restart', async () => {
   assert.equal(first.status, 200)
   assert.ok(first.body.settings, 'the settings object is present')
   assert.equal(typeof first.body.settings.fontSize, 'number')
+  assert.equal(first.body.settings.route, 'manual', 'a new installation pins its model by default')
 
   const written = await put('/api/settings', {
     settings: { model: 'a-model-for-the-test', fontSize: 17, view: 'verbose' },
@@ -122,6 +123,43 @@ test('G1: a partial update merges instead of replacing', async () => {
   assert.equal(after.body.settings.model, 'keep-me', 'an unrelated field survives')
   assert.equal(after.body.settings.userName, 'Prof')
   assert.equal(after.body.settings.fontSize, 15)
+})
+
+test('model routing is explicit and Plan is not persisted as a restart default', async () => {
+  const selected = await put('/api/settings', {
+    settings: { provider: 'openrouter', model: 'example/model:free', route: 'auto', mode: 'plan' },
+  })
+  assert.equal(selected.body.settings.route, 'auto')
+  assert.equal(selected.body.settings.mode, 'plan', 'the current interaction may still plan')
+  const raw = JSON.parse(readFileSync(join(dataDir, 'settings.json'), 'utf8'))
+  assert.equal(raw.settings.mode, 'agent', 'Plan should not turn every future launch read-only')
+  assert.equal(raw.settings.route, 'auto', 'an explicit routing preference survives')
+  const invalid = await put('/api/settings', { settings: { provider: 'unsupported', route: 'surprise' } })
+  assert.equal(invalid.body.settings.provider, 'ollama')
+  assert.equal(invalid.body.settings.route, 'manual')
+})
+
+test('settings survive an actual process restart without treating valid numeric preferences as corrupt', async () => {
+  await put('/api/settings', { settings: {
+    provider: 'openrouter', model: 'example/free-a:free', route: 'manual',
+    mode: 'plan', volume: 0.25, fontSize: 19, userName: 'مطور',
+  } })
+  if (proc) {
+    const child = proc
+    await new Promise<void>((resolve) => { child.once('exit', () => resolve()); child.kill() })
+  }
+  proc = null
+  base = ''
+  boot = ''
+  const restarted = await get('/api/settings')
+  assert.equal(restarted.body.settings.model, 'example/free-a:free')
+  assert.equal(restarted.body.settings.provider, 'openrouter')
+  assert.equal(restarted.body.settings.route, 'manual')
+  assert.equal(restarted.body.settings.mode, 'agent', 'Plan does not persist across launches')
+  assert.equal(restarted.body.settings.volume, 0.25)
+  assert.equal(restarted.body.settings.fontSize, 19)
+  assert.equal(restarted.body.settings.userName, 'مطور')
+  assert.equal(readdirSync(dataDir).some((name) => name.includes('settings.json.corrupt')), false)
 })
 
 test('G3: the tool manifest is published', async () => {

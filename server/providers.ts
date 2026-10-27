@@ -3,8 +3,11 @@ import { createAnthropic } from '@ai-sdk/anthropic'
 import { createOpenAI } from '@ai-sdk/openai'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import type { LanguageModel } from 'ai'
-import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, mkdirSync, writeFileSync, renameSync } from 'node:fs'
+import { join } from 'node:path'
+import { DATA_DIR } from './config.ts'
 import { baseUrlFor, keyFor } from './keys.ts'
+import { cachedCatalogModels } from './catalog.ts'
 
 /* ---------------------------------------------------------------------------
    Providers.
@@ -29,6 +32,33 @@ export interface ProviderConfig {
   apiKey?: string
   /** only used when provider is 'custom' */
   baseUrl?: string
+}
+
+export interface ModelLimits {
+  context: number | null
+  output: number | null
+}
+
+/** Unknown metadata stays unknown; never invent a window from a model name. */
+export function modelLimits(cfg: ProviderConfig): ModelLimits {
+  if (cfg.provider === 'openrouter') {
+    ensureOpenRouterCache()
+    const model = catalogueCache?.models.find((m) => m.id === cfg.model)
+    return { context: positiveNumber(model?.contextLength), output: positiveNumber(model?.outputLimit) }
+  }
+  const model = cachedCatalogModels(cfg.provider).find((m) => m.id === cfg.model)
+  return { context: model?.context || null, output: model?.output || null }
+}
+
+export function cachedModelLimits(provider: ProviderId, model: string): {
+  contextWindowTokens?: number
+  maxOutputTokens?: number
+} {
+  const limits = modelLimits({ provider, model })
+  return {
+    ...(limits.context ? { contextWindowTokens: limits.context } : {}),
+    ...(limits.output ? { maxOutputTokens: limits.output } : {}),
+  }
 }
 
 export const OLLAMA_BASE = process.env.LOONG_OLLAMA ?? 'http://127.0.0.1:11434'
@@ -171,6 +201,34 @@ export const MODEL_FALLBACKS: Record<ProviderId, string[]> = {
   custom: [],
 }
 
+export function isFreeModelId(model: string): boolean {
+  return /:free$/i.test(model) || model.toLowerCase() === 'openrouter/free'
+}
+
+/**
+ * Additional models permitted by Auto. A fixed selection is never replaced,
+ * and OpenRouter fallbacks never introduce a paid model. A live catalogue is
+ * authoritative when present; the offline seed is text-only and free-only.
+ */
+export function fallbackModelsFor(
+  cfg: ProviderConfig,
+  options: { route?: 'auto' | 'manual'; vision?: boolean } = {},
+): string[] {
+  if (options.route !== 'auto') return []
+  if (cfg.provider !== 'openrouter') return []
+  if (!isFreeModelId(cfg.model) && cfg.model !== 'openrouter/auto') return []
+  ensureOpenRouterCache()
+  const available = catalogueCache?.models
+  if (available) {
+    return available
+      .filter((m) => m.id !== cfg.model && m.free && m.supportsTools && (!options.vision || m.vision))
+      .map((m) => m.id)
+      .slice(0, 4)
+  }
+  if (options.vision) return []
+  return MODEL_FALLBACKS.openrouter.filter((id) => id !== cfg.model && isFreeModelId(id))
+}
+
 /**
  * Call-level provider options: prompt caching where the provider bills for
  * context, and extended thinking where it exists.
@@ -182,6 +240,7 @@ export function callProviderOptions(cfg: ProviderConfig): Record<string, unknown
   const shared = { cacheControl: { type: 'ephemeral' } }
   switch (cfg.provider) {
     case 'openrouter':
+      ensureOpenRouterCache()
       /* OpenRouter's documented body field; the compatible provider forwards it.
          parallelToolCalls rides the openai-compatible envelope so independent
          reads fire together instead of one-by-one. */
@@ -191,8 +250,17 @@ export function callProviderOptions(cfg: ProviderConfig): Record<string, unknown
          provider and was ignored here — which is why independent reads went one
          at a time on the default provider. */
       return {
-        openrouter: { ...shared, parallel_tool_calls: true },
-        openai: { parallelToolCalls: true },
+        openrouter: {
+          /* These are endpoint fallbacks for the SAME model. Model changes
+             are controlled separately by the explicitly selected Auto route. */
+          provider: { require_parameters: true, allow_fallbacks: true,
+            ...(isFreeModelId(cfg.model) || catalogueCache?.models.find((m) => m.id === cfg.model)?.free
+              ? { max_price: { prompt: 0, completion: 0 } } : {}),
+          },
+          ...(catalogueCache?.models.find((m) => m.id === cfg.model)?.parameters.includes('parallel_tool_calls')
+            ? { parallel_tool_calls: true }
+            : {}),
+        },
       }
     case 'anthropic':
       return { anthropic: shared }
@@ -229,7 +297,7 @@ export function resolveModel(cfg: ProviderConfig): LanguageModel {
         /* OpenRouter attributes traffic from these; without them it still
            works, but the dashboard cannot tell one app from another */
         headers: {
-          'HTTP-Referer': 'https://github.com/loong-app',
+          'HTTP-Referer': 'https://github.com/alros2yhmh-commits/loong',
           'X-Title': 'Loong',
         },
       }).chatModel(model)
@@ -268,7 +336,7 @@ export interface LocalModel {
   sizeBytes: number
   family: string
   /** Ollama reports capability tags; tools is the one we care about */
-  supportsTools: boolean
+  supportsTools: boolean | null
 }
 
 /** Ask the local Ollama daemon what it actually has installed. */
@@ -282,15 +350,16 @@ export async function listLocalModels(): Promise<LocalModel[]> {
       name: string
       size?: number
       details?: { family?: string; families?: string[] }
+      capabilities?: string[]
     }[]
   }
   return (body.models ?? []).map((m) => ({
     name: m.name,
     sizeBytes: m.size ?? 0,
     family: m.details?.family ?? 'unknown',
-    /* the coder models ship a chat template without tool tokens, so they emit
-       tool calls as text. Flagged here so the settings screen can warn. */
-    supportsTools: !/coder/i.test(m.name),
+    /* A name containing "coder" says nothing about tool capability. Older
+       Ollama tags responses omit capabilities, so report unknown honestly. */
+    supportsTools: Array.isArray(m.capabilities) ? m.capabilities.includes('tools') : null,
   }))
 }
 
@@ -323,6 +392,11 @@ export interface RemoteModel {
   contextLength: number
   /** per million tokens, as strings because OpenRouter prices in exact decimals */
   promptPrice: string
+  completionPrice: string | null
+  outputLimit: number | null
+  reasoning: boolean
+  parameters: string[]
+  stale?: boolean
   free: boolean
   /** every model that reaches here has already passed the tool-call filter */
   supportsTools: boolean
@@ -335,43 +409,95 @@ interface Cache {
   models: RemoteModel[]
 }
 let catalogueCache: Cache | null = null
+let cacheRead = false
+const OPENROUTER_CACHE_FILE = join(DATA_DIR, 'openrouter-models.json')
+
+/** Public model metadata survives restarts without storing keys or requests. */
+function ensureOpenRouterCache(): void {
+  if (cacheRead) return
+  cacheRead = true
+  try {
+    const parsed = JSON.parse(readFileSync(OPENROUTER_CACHE_FILE, 'utf8')) as {
+      version?: unknown; at?: unknown; models?: unknown
+    }
+    if (parsed.version !== 1 || typeof parsed.at !== 'number' || !Number.isFinite(parsed.at) || parsed.at > Date.now() + 60_000 || !Array.isArray(parsed.models)) return
+    const models = parsed.models.filter((value): value is RemoteModel => {
+      if (!value || typeof value !== 'object') return false
+      const model = value as RemoteModel
+      return typeof model.id === 'string' && model.id.length > 0 && typeof model.name === 'string'
+        && model.supportsTools === true && typeof model.free === 'boolean' && typeof model.vision === 'boolean'
+        && typeof model.reasoning === 'boolean' && Array.isArray(model.parameters)
+        && model.parameters.every((parameter) => typeof parameter === 'string')
+    })
+    catalogueCache = { at: parsed.at, models }
+  } catch { /* First launch or malformed cache: keep manual model entry available. */ }
+}
+
+function saveOpenRouterCache(): void {
+  if (!catalogueCache) return
+  try {
+    mkdirSync(DATA_DIR, { recursive: true })
+    const temporary = `${OPENROUTER_CACHE_FILE}.${process.pid}.tmp`
+    writeFileSync(temporary, JSON.stringify({ version: 1, ...catalogueCache }), 'utf8')
+    renameSync(temporary, OPENROUTER_CACHE_FILE)
+  } catch { /* Model discovery remains usable with a read-only data directory. */ }
+}
+
+export function openRouterCatalogStatus(): { fetchedAt: number | null; stale: boolean } {
+  ensureOpenRouterCache()
+  return { fetchedAt: catalogueCache?.at ?? null, stale: !catalogueCache || Date.now() - catalogueCache.at > CATALOGUE_TTL }
+}
+
 const CATALOGUE_TTL = 10 * 60_000
 
 export async function listOpenRouterModels(force = false): Promise<RemoteModel[]> {
+  ensureOpenRouterCache()
   if (!force && catalogueCache && Date.now() - catalogueCache.at < CATALOGUE_TTL) {
     return catalogueCache.models
   }
-  const res = await fetch(`${OPENROUTER_BASE}/models`, {
-    signal: AbortSignal.timeout(10_000),
-  })
-  if (!res.ok) throw new ProviderError(`OpenRouter catalogue answered ${res.status}`)
-
-  const body = (await res.json()) as {
+  let body: {
     data?: {
       id: string
       name?: string
       context_length?: number
-      pricing?: { prompt?: string }
+      pricing?: { prompt?: string; completion?: string }
+      top_provider?: { max_completion_tokens?: number | null }
       supported_parameters?: string[]
       architecture?: { input_modalities?: string[] }
     }[]
   }
+  try {
+    const res = await fetch(`${OPENROUTER_BASE}/models`, { signal: AbortSignal.timeout(10_000) })
+    if (!res.ok) throw new ProviderError(`OpenRouter catalogue answered ${res.status}`)
+    body = await res.json() as typeof body
+    if (!Array.isArray(body?.data)) throw new ProviderError('Invalid OpenRouter catalogue response')
+  } catch (error) {
+    if (catalogueCache) return catalogueCache.models.map((model) => ({ ...model, stale: true }))
+    throw error
+  }
 
   const models: RemoteModel[] = (body.data ?? [])
-    .filter((m) => (m.supported_parameters ?? []).includes('tools'))
+    .filter((m) => typeof m?.id === 'string' && m.id.length > 0)
+    .filter((m) => stringList(m.supported_parameters).includes('tools'))
     /* these can never run through Loong's chat/completions adapter, so hide
        them from the picker instead of letting a run die on a doomed model:
        - Gemini "live" / "live-extended-thinking" are WebSocket-only Live APIs
        - ":batch" / "-batch" variants use the Anthropic batch endpoint */
     .filter((m) => !/(^|[:\/])live([-:]|extended)|[:\-]batch\b|\binkling\b/i.test(m.id))
+    .filter((m, index, models) => models.findIndex((other) => other.id === m.id) === index)
     .map((m) => ({
       id: m.id,
       name: m.name ?? m.id,
-      contextLength: m.context_length ?? 0,
-      promptPrice: m.pricing?.prompt ?? '0',
-      free: m.id.endsWith(':free') || m.pricing?.prompt === '0',
+      contextLength: positiveNumber(m.context_length) ?? 0,
+      outputLimit: positiveNumber(m.top_provider?.max_completion_tokens),
+      promptPrice: m.pricing?.prompt ?? 'unknown',
+      completionPrice: m.pricing?.completion ?? null,
+      /* Zero input price alone is not free: output can still be billable. */
+      free: isFreeModelId(m.id) || (zeroPrice(m.pricing?.prompt) && zeroPrice(m.pricing?.completion)),
+      reasoning: stringList(m.supported_parameters).some((p) => p === 'reasoning' || p === 'include_reasoning'),
+      parameters: stringList(m.supported_parameters),
       supportsTools: true,
-      vision: (m.architecture?.input_modalities ?? []).includes('image'),
+      vision: stringList(m.architecture?.input_modalities).includes('image'),
     }))
 
   /* free first, then by context — the useful end of the list */
@@ -381,5 +507,18 @@ export async function listOpenRouterModels(force = false): Promise<RemoteModel[]
   })
 
   catalogueCache = { at: Date.now(), models }
+  saveOpenRouterCache()
   return models
+}
+
+function positiveNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
+}
+
+function zeroPrice(value: unknown): boolean {
+  return typeof value === 'string' && value.trim() !== '' && Number(value) === 0
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : []
 }

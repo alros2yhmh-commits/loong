@@ -267,7 +267,7 @@ test('a denied tool does not run, and the model is told not to retry', async () 
     (e) => e.type === EventType.TOOL_CALL_RESULT,
   ) as unknown as { content: string }
   assert.ok(result, 'no result was emitted for the denial')
-  assert.match(result.content, /denied permission/i)
+  assert.match(result.content, /denied permission|permission was not granted/i)
   assert.match(result.content, /do not retry/i)
 })
 

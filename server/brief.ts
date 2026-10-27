@@ -46,7 +46,17 @@ const FIX_WORDS = /\b(fix|bug|broken|crash|fails?|error|not working|wrong|regres
 const REFACTOR_WORDS = /\b(refactor|clean ?up|rename|extract|simplify|restructure|dedupe|reorganize)\b/i
 const REVIEW_WORDS = /\b(review|audit|check|inspect|critique|feedback on|look at)\b/i
 const OPERATE_WORDS = /\b(run|deploy|install|commit|push|release|build the|start|stop|open|launch)\b/i
-const QUESTION_END = /\?\s*$/
+const QUESTION_END = /[?؟]\s*$/
+const ARABIC = {
+  build: /(?:^|[\s،؛.!؟])(?:اكتب|انشئ|أنشئ|ابن|ابني|اصنع|نفذ|اعمل|أعمل|اضف|أضف|طور|طوّر|عدل|عدّل)(?:[\s،؛.!؟]|$)/u,
+  fix: /(?:اصلح|أصلح|اصلاح|إصلاح|خطأ|خطا|عطل|لا يعمل|مش شغال|بيتعطل|ينهار|مشكله|مشكلة)/u,
+  review: /(?:افحص|إفحص|راجع|اقرأ|اقرا|قراءة|مراجعة|فحص)/u,
+  explain: /^(?:ما هو|ما هي|ماذا|لماذا|كيف|هل|اشرح|اشرحلي|اشرح لي|وضح|يعني ايه|إيه|ايه)(?:\s|$)/u,
+  operate: /(?:شغل|شغّل|ثبت|ثبّت|انشر|ارفع|ابدأ التشغيل)/u,
+  research: /(?:ابحث|ابحثلي|قارن|مقارنة|مصادر|توثيق رسمي|احدث|أحدث)/u,
+  scale: /(?:بالكامل|كامل|كاملة|كل الملفات|كل المشروع|المشروع كله|احترافي|متكامل|متكاملة|جميع)/u,
+}
+const GREETING = /^(?:hi|hello|hey|thanks|thank you|ok|okay|مرحبا|مرحبًا|اهلا|أهلا|شكرا|شكرًا|تمام)[!.،\s]*$/i
 const VAGUE = /\b(better|nicer|improve|polish|modern|clean|good|proper|somehow|maybe|etc\.?)\b/i
 const SCALE = /\b(all|every|entire|whole|throughout|across the (app|project|codebase)|everything)\b/i
 
@@ -59,25 +69,33 @@ export function compileBrief(message: string): Brief {
   const lower = text.toLowerCase()
   const words = text.split(/\s+/).length
 
-  const isQuestion = QUESTION_END.test(text) || /^(what|why|how|when|where|who|which|is|are|can|does|do|should)\b/i.test(text)
-  const wantsResearch = RESEARCH_WORDS.test(lower)
+  const isQuestion = ARABIC.explain.test(text) || QUESTION_END.test(text) || /^(what|why|how|when|where|who|which|is|are|can|does|do|should)\b/i.test(text)
+  const wantsResearch = RESEARCH_WORDS.test(lower) || ARABIC.research.test(text)
+  const scale = SCALE.test(lower) || ARABIC.scale.test(text)
   const stack = Array.from(new Set((lower.match(STACK) ?? []).map((s) => s.replace(/\.?js$/, ''))))
 
+  const explicitChange = BUILD_WORDS.test(lower) || ARABIC.build.test(text) ||
+    /\b(?:fix|repair|resolve|refactor)\b/i.test(text) || /(?:اصلح|أصلح|صلح|صحح|صحّح)/u.test(text)
+  const reportOnly = /\b(?:write|produce|give|provide)\s+(?:me\s+)?(?:(?:a|an|the)\s+)?(?:report|review|explanation)\b|(?:اكتب|قدم|قدّم)\s+(?:تقرير|شرح|مراجعة)/i.test(text)
+  const reviewOnly = /(?:do not (?:edit|change|write)|without (?:editing|changing)|read.only|لا (?:تغير|تغيّر|تعدل|تعدّل|تكتب)|بدون تعديل)/i.test(text)
   let intent: Brief['intent'] = 'build'
-  if (FIX_WORDS.test(lower)) intent = 'fix'
+  if (GREETING.test(text)) intent = 'question'
+  else if (reviewOnly || reportOnly || ((REVIEW_WORDS.test(lower) || ARABIC.review.test(text)) && !explicitChange)) intent = 'review'
+  else if (isQuestion && !explicitChange) intent = wantsResearch ? 'research' : 'explain'
+  else if (FIX_WORDS.test(lower) || ARABIC.fix.test(text)) intent = 'fix'
   else if (REFACTOR_WORDS.test(lower)) intent = 'refactor'
-  else if (REVIEW_WORDS.test(lower)) intent = 'review'
-  else if (BUILD_WORDS.test(lower)) intent = 'build'
-  else if (OPERATE_WORDS.test(lower)) intent = 'operate'
+  else if (REVIEW_WORDS.test(lower) || (ARABIC.review.test(text) && !ARABIC.build.test(text))) intent = 'review'
+  else if (BUILD_WORDS.test(lower) || ARABIC.build.test(text)) intent = 'build'
+  else if (OPERATE_WORDS.test(lower) || ARABIC.operate.test(text)) intent = 'operate'
   else if (isQuestion) intent = wantsResearch ? 'research' : 'explain'
   else if (wantsResearch && words < 40) intent = 'research'
 
   /* size: what the request costs to do, not how it was typed */
   let complexity: Complexity = 'small'
-  if (words > 220 || SCALE.test(lower)) complexity = 'large'
-  else if (words > 90 || (intent === 'refactor' && SCALE.test(lower))) complexity = 'medium'
-  if (words < 12 && !SCALE.test(lower)) complexity = 'trivial'
-  if (intent === 'explain' || intent === 'research') complexity = words > 120 ? 'medium' : 'trivial'
+  if (words > 220 || scale) complexity = 'large'
+  else if (words > 90 || (intent === 'refactor' && scale)) complexity = 'medium'
+  if (words < 12 && !scale) complexity = 'trivial'
+  if (intent === 'explain' || intent === 'research' || intent === 'question') complexity = words > 120 ? 'medium' : 'trivial'
   /* a crash is never small, however briefly it was reported */
   if (intent === 'fix' && /\b(crash(es|ed|ing)?|data ?loss|corrupt(ed|ion)?|security|leak(s|ing)?)\b/i.test(lower))
     complexity = 'large'
@@ -127,7 +145,7 @@ export function compileBrief(message: string): Brief {
   return {
     complexity,
     intent,
-    objective: text.length > 400 ? `${text.slice(0, 400)}…` : text,
+    objective: text,
     deliverable:
       intent === 'explain' || intent === 'research'
         ? 'A direct answer, in the reader\'s terms, as long as it needs to be and no longer.'
@@ -138,7 +156,8 @@ export function compileBrief(message: string): Brief {
     steps,
     verification,
     wantsResearch,
-    wantsPlan: complexity === 'large' || (complexity === 'medium' && intent !== 'fix'),
+    wantsPlan: (complexity === 'large' || (complexity === 'medium' && intent !== 'fix')) &&
+      !/\b(?:no plan|without (?:a )?plan(?:ning)?|skip (?:the )?plan)\b|(?:بدون (?:خطة|تخطيط)|لا (?:تكتب|تعمل|تضع) خطة)/i.test(text),
   }
 }
 
@@ -151,8 +170,8 @@ export function briefBlock(brief: Brief): string {
     `Intent: ${brief.intent} · size: ${brief.complexity}`,
     `Objective: ${brief.objective}`,
     `Deliverable: ${brief.deliverable}`,
-    brief.constraints.length ? `Constraints:/n${brief.constraints.map((c) => `- ${c}`).join('\n')}` : '',
-    brief.steps.length ? `Shape of the work:/n${brief.steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}` : '',
+    brief.constraints.length ? `Constraints:\n${brief.constraints.map((c) => `- ${c}`).join('\n')}` : '',
+    brief.steps.length ? `Shape of the work:\n${brief.steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}` : '',
     `Proof: ${brief.verification}`,
     brief.wantsResearch
       ? 'This one lives partly outside the workspace: search before you answer, and cite what you read.'

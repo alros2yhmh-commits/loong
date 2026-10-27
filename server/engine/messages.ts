@@ -12,6 +12,8 @@ export interface HistoryTurn {
   role: 'user' | 'assistant' | 'tool'
   /** the prose the model should read for this turn */
   content: string
+  /** Provider reasoning is retained only for protocol continuity, not shown as proof. */
+  reasoning?: { text: string; providerOptions?: Record<string, unknown> }[]
   /** images the reader attached — data URLs or file paths the agent can read */
   images?: string[]
   /** tool calls made during an assistant turn */
@@ -97,6 +99,9 @@ export function toModelMessages(history: HistoryTurn[]): ModelMessage[] {
 
     if (turn.role === 'assistant') {
       const parts: unknown[] = []
+      for (const part of turn.reasoning ?? []) {
+        parts.push({ type: 'reasoning', text: part.text, ...(part.providerOptions ? { providerOptions: part.providerOptions } : {}) })
+      }
       if (turn.content.trim()) {
         parts.push({ type: 'text', text: turn.content })
       }

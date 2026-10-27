@@ -74,7 +74,7 @@ test('two runs keep separate contexts and abort independently', async () => {
     runAgent({
       runId: 'run-a',
       threadId: 'thread-a',
-      messages: [{ role: 'user', content: 'a' }],
+      messages: [{ role: 'user', content: 'What is the letter a?' }],
       config: { provider: 'ollama', model: 'mock' },
       mode: 'agent',
       trust: 'auto',
@@ -90,7 +90,7 @@ test('two runs keep separate contexts and abort independently', async () => {
     runAgent({
       runId: 'run-b',
       threadId: 'thread-b',
-      messages: [{ role: 'user', content: 'b' }],
+      messages: [{ role: 'user', content: 'What is the letter b?' }],
       config: { provider: 'ollama', model: 'mock' },
       mode: 'agent',
       trust: 'auto',
@@ -107,7 +107,9 @@ test('two runs keep separate contexts and abort independently', async () => {
   await Promise.all([runA, runB])
 
   /* A was stopped; B finished on its own */
-  assert.equal(a.types().includes(EventType.RUN_FINISHED), false, 'the aborted run must not report finished')
+  const cancelled = a.events.find((event) => event.type === EventType.RUN_FINISHED) as unknown as { result?: { status?: string } }
+  assert.equal(cancelled?.result?.status, 'cancelled', 'the aborted run must explicitly report cancellation, never success')
+  assert.equal(a.events.some((event) => event.type === EventType.RUN_FINISHED && (event as unknown as { result?: { status?: string } }).result?.status === 'completed'), false)
   assert.equal(b.types().includes(EventType.RUN_FINISHED), true, 'the other run must finish')
   assert.equal(b.text(), 'BBBBBBBBBB')
 

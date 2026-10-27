@@ -1,4 +1,4 @@
-import type { HistoryTurn } from './agent.ts'
+import type { HistoryTurn } from './engine/messages.ts'
 
 /* ---------------------------------------------------------------------------
    Context window management.
@@ -50,22 +50,35 @@ export function contextChars(history: HistoryTurn[]): number {
  * Tool results in the old section are truncated to their first line, because
  * a 200-line grep output from 10 turns ago is dead weight.
  */
-export function compactHistory(history: HistoryTurn[]): HistoryTurn[] {
+export interface ContextBudget { maxChars?: number; aggressive?: boolean }
+export function compactHistory(history: HistoryTurn[], budget: ContextBudget = {}): HistoryTurn[] {
+  const limit = Math.max(4_000, budget.maxChars ?? MAX_CONTEXT_CHARS)
+  const hint = Math.min(COMPACT_HINT_CHARS, Math.floor(limit / 2))
+  const protectedTurns = budget.aggressive ? 4 : PROTECTED_TURNS
   const clipped = truncateToolOutputs(history)
-  if (contextChars(clipped) <= COMPACT_HINT_CHARS) return clipped
+  if (contextChars(clipped) <= hint) return clipped
 
   /* tier 1: old tool results are answers the model can ask for again. The
      newest few stay verbatim — they are what the current turn is built on. */
   const micro = microcompact(clipped)
-  if (contextChars(micro) <= MAX_CONTEXT_CHARS) return micro
+  if (contextChars(micro) <= limit && !budget.aggressive) return micro
 
   /* tier 2: still too large — collapse the old section into one summary */
-  if (micro.length <= PROTECTED_TURNS) return micro
-  const splitIdx = micro.length - PROTECTED_TURNS
+  if (micro.length <= protectedTurns) return micro
+  let splitIdx = micro.length - protectedTurns
+  // Never start the recent tail at a result whose assistant call was summarized.
+  if (micro[splitIdx]?.role === 'tool' && micro[splitIdx - 1]?.toolCalls?.length) splitIdx -= 1
   const old = micro.slice(0, splitIdx)
   const recent = micro.slice(splitIdx)
 
   const summary = summarize(old)
+  const firstRequest = history.find((turn) => turn.role === 'user' && !turn.content.startsWith('[Earlier conversation'))
+  const latestRequest = [...old].reverse().find((turn) => turn.role === 'user' && turn !== firstRequest && !turn.content.startsWith('[Earlier conversation'))
+  const requirements = [firstRequest, latestRequest].filter((turn): turn is HistoryTurn => Boolean(turn))
+  if (requirements.length) {
+    summary.content += '\n\n[User requirements retained verbatim; do not drop these constraints.]\n' +
+      requirements.map((turn) => turn.content).join('\n\n')
+  }
   return truncateToolOutputs([summary, ...recent])
 }
 
@@ -152,7 +165,7 @@ function truncateToolOutputs(history: HistoryTurn[]): HistoryTurn[] {
 const MAX_SUMMARY_CHARS = 6_000
 
 function summarize(turns: HistoryTurn[]): HistoryTurn {
-  const parts: string[] = ['[Earlier conversation, summarized to fit the context window.]']
+  const parts: string[] = ['[Earlier conversation, summarized to fit the context window. Most recent work first; original requirements retained below.]']
   let spent = 0
   let dropped = 0
   const push = (line: string) => {
@@ -164,7 +177,7 @@ function summarize(turns: HistoryTurn[]): HistoryTurn {
     parts.push(line)
   }
 
-  for (const turn of turns) {
+  for (const turn of [...turns].reverse()) {
     if (turn.role === 'user') {
       const snippet = turn.content.slice(0, 200).trim()
       if (snippet) push(`User asked: ${snippet}${turn.content.length > 200 ? '…' : ''}`)
@@ -181,7 +194,7 @@ function summarize(turns: HistoryTurn[]): HistoryTurn {
     }
     if (turn.role === 'tool') {
       for (const result of turn.toolResults ?? []) {
-        const firstLine = result.output.split('\n')[0]?.slice(0, 150) ?? ''
+        const firstLine = (result.ok ? result.output.split('\n')[0] : result.output.slice(-700))?.slice(0, 700) ?? ''
         push(`  → ${result.toolName}: ${firstLine}${result.ok ? '' : ' (failed)'}${result.output.length > 150 ? '…' : ''}`)
       }
     }

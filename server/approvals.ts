@@ -37,6 +37,29 @@ const pending = new Map<string, Pending>()
 export type ApprovalListener = (request: ApprovalRequest) => void
 
 const listeners = new Map<string, ApprovalListener[]>()
+export interface ApprovalResolution {
+  id: string
+  approved: boolean
+  reason: 'approved' | 'denied' | 'timeout' | 'cancelled'
+}
+const resolutionListeners = new Map<string, ((resolution: ApprovalResolution) => void)[]>()
+
+export function onApprovalResolved(runId: string, fn: (resolution: ApprovalResolution) => void): () => void {
+  const list = resolutionListeners.get(runId) ?? []
+  list.push(fn)
+  resolutionListeners.set(runId, list)
+  return () => {
+    const next = (resolutionListeners.get(runId) ?? []).filter((f) => f !== fn)
+    if (next.length) resolutionListeners.set(runId, next)
+    else resolutionListeners.delete(runId)
+  }
+}
+
+function announceResolution(entry: Pending, approved: boolean, reason: ApprovalResolution['reason']): void {
+  for (const fn of resolutionListeners.get(entry.runId) ?? []) {
+    fn({ id: entry.request.id, approved, reason })
+  }
+}
 
 /** the agent subscribes so it can push the request down the open SSE stream */
 export function onApprovalRequested(runId: string, fn: ApprovalListener): () => void {
@@ -66,7 +89,9 @@ export function requestApproval(
     }
 
     const timer = setTimeout(() => {
+      const entry = pending.get(id)
       pending.delete(id)
+      if (entry) announceResolution(entry, false, 'timeout')
       resolve(false)
     }, TIMEOUT_MS)
 
@@ -80,6 +105,7 @@ export function resolveApproval(id: string, approved: boolean): boolean {
   if (!entry) return false
   clearTimeout(entry.timer)
   pending.delete(id)
+  announceResolution(entry, approved, approved ? 'approved' : 'denied')
   entry.resolve(approved)
   return true
 }
@@ -95,10 +121,12 @@ export function cancelRunApprovals(runId: string): number {
   for (const [id, entry] of pending) {
     if (entry.runId !== runId) continue
     clearTimeout(entry.timer)
+    announceResolution(entry, false, 'cancelled')
     entry.resolve(false)
     pending.delete(id)
     n++
   }
+  resolutionListeners.delete(runId)
   return n
 }
 
@@ -106,6 +134,7 @@ export function denyAllPending(): number {
   let n = 0
   for (const [id, entry] of pending) {
     clearTimeout(entry.timer)
+    announceResolution(entry, false, 'cancelled')
     entry.resolve(false)
     pending.delete(id)
     n++

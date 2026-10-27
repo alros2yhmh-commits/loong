@@ -2,8 +2,6 @@ import { stepCountIs, streamText, type LanguageModel, type ToolSet } from 'ai'
 import type { ModelMessage } from '@ai-sdk/provider-utils'
 import { EventEncoder } from '@ag-ui/encoder'
 import { EventType, type BaseEvent } from '@ag-ui/core'
-import { exec } from 'node:child_process'
-import { promisify } from 'node:util'
 import { APPROVAL_REQUIRED, TOOLS } from './tools.ts'
 import {
   createAskUserTool,
@@ -12,9 +10,10 @@ import {
   createProposeChangesTool,
   webSearchTool,
   type Plan,
+  type Audit,
 } from './tools.ts'
 import { applyEdits, detectVerify } from './edits.ts'
-import { resolveModel, MODEL_FALLBACKS, type ProviderConfig } from './providers.ts'
+import { resolveModel, fallbackModelsFor, modelLimits, type ProviderConfig } from './providers.ts'
 import {
   createTaskManyTool,
   createTaskTool,
@@ -38,6 +37,7 @@ import {
   cancelRunApprovals,
   cancelRunQuestions,
   onApprovalRequested,
+  onApprovalResolved,
   onQuestionAsked,
   requestApproval,
 } from './approvals.ts'
@@ -46,7 +46,7 @@ import { acquireWriteLease } from './leases.ts'
 import { filesForRun } from './journal.ts'
 import { scanPaths, hasCritical } from './security-gate.ts'
 import { selectSkills, skillIndexBlock, skillsBlock } from './skills.ts'
-import { createCycle, cyclePayload, EVIDENCE_NUDGE, missingEvidence, observe, phaseBlock } from './cycle.ts'
+import { createCycle, cyclePayload, EVIDENCE_NUDGE, missingEvidence, observe, phaseBlock, toolResultSucceeded } from './cycle.ts'
 import { runKernelPass } from './engine/kernel.ts'
 import { INTERRUPTED_RESULT, toModelMessages, type HistoryTurn } from './engine/messages.ts'
 import { identityBlock } from './identity.ts'
@@ -55,6 +55,7 @@ import { recordFindings } from './findings.ts'
 import { kbForRule } from './security-kb.ts'
 import { libraryIndexBlock } from './library.ts'
 import { briefBlock, compileBrief } from './brief.ts'
+import { failDetail, firstLines, gateDecision, repairTurn, runProjectCheck, type CheckResult } from './verify-gate.ts'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { clip, displayPath, getWorkspace, haveWorkspace, resolveInside } from './config.ts'
 import { screenCommand } from './command-guard.ts'
@@ -131,8 +132,7 @@ const RETRIES_PER_MODEL = 2
 const RETRY_BACKOFF_MS = [3000, 8000]
 /* the post-run check runs the project's own build/test — a cold gradle build
    is minutes, not seconds, and a check killed at 60s is a lie either way */
-const CHECK_TIMEOUT_MS = 180_000
-const execAsync = promisify(exec)
+export type RunStatus = 'completed' | 'partial' | 'blocked' | 'budget_exhausted' | 'cancelled' | 'failed'
 
 export const SYSTEM_PROMPT = `You are not a chatbot. You have real tools that read, write and execute inside the
 user's workspace, and they really run. Your strengths are reading before writing,
@@ -454,6 +454,10 @@ export interface RunOptions {
   abortSignal?: AbortSignal
   model?: LanguageModel
   retryBackoffMs?: number[]
+  /** Total model steps for this run; a CLI budget must not mutate process defaults. */
+  maxSteps?: number
+  /** Durable canonical history, after completed model/tool transactions. */
+  onCheckpoint?: (history: HistoryTurn[]) => void
 }
 
 /** one encoder per run — it decides SSE vs protobuf framing from the Accept header */
@@ -471,6 +475,7 @@ const WRITE_TOOLS = new Set([
   'edit_file',
   'multi_edit',
   'edit_many',
+  'propose_changes',
   'mkdir',
   'delete_file',
   'move_file',
@@ -496,7 +501,13 @@ function pathsFor(input: unknown): string[] {
   }
   for (const f of ['paths', 'files']) {
     const v = i[f]
-    if (Array.isArray(v)) out.push(...v.filter((x): x is string => typeof x === 'string'))
+    if (Array.isArray(v)) {
+      for (const item of v) {
+        if (typeof item === 'string') out.push(item)
+        else if (item && typeof item === 'object' && typeof (item as { path?: unknown }).path === 'string')
+          out.push((item as { path: string }).path)
+      }
+    }
   }
   /* edit_many hides its paths one level down, inside each edit */
   if (Array.isArray(i.edits)) {
@@ -906,11 +917,29 @@ export async function runAgent(opts: RunOptions): Promise<void> {
      opinion about which phase it is in. The interface shows this phase; the
      stop gate reads its evidence. */
   const cycle = createCycle()
+  const requestedBudget = Number(opts.maxSteps ?? RUN_MAX_STEPS)
+  const runBudget = Number.isFinite(requestedBudget) ? Math.max(1, Math.min(2000, Math.floor(requestedBudget))) : RUN_MAX_STEPS
+  const priorLedger = opts.threadId ? readLedger(opts.threadId) : null
+  const continuing = isContinuation(taskText)
+  const requestBrief = compileBrief(continuing && priorLedger?.task ? `${priorLedger.task}\n${taskText}` : taskText)
+  const implementationTask = mode === 'agent' && ['build', 'fix', 'refactor'].includes(requestBrief.intent)
+  const operationalTask = mode === 'agent' && requestBrief.intent === 'operate'
+  let operationalExecutions = 0
+  let latestAudit: Audit | null = null
+  let completionNudges = 0
+  let acceptanceNudged = false
+  let contractNudged = false
+  let repairsDone = 0
+  let lastCheck: (CheckResult & { command: string; label: string }) | null = null
+  let verifiedWriteStep = -1
+  let runStatus: RunStatus = 'completed'
+  let statusReason = ''
+  let permissionBlocked = false
+  const auditEvidence = () => latestAudit?.verdict === 'met' && latestAudit.items.length > 0 &&
+    latestAudit.items.every((item) => item.met && item.evidence.trim().length >= 3) && cycle.reads > 0
   /* What the last run in this thread actually did. "Continue" used to start
      from zero knowledge every time, so the model spent its budget re-reading
      the project and stopped before writing anything. */
-  const priorLedger = opts.threadId ? readLedger(opts.threadId) : null
-  const continuing = isContinuation(taskText)
   let latestPlan: Plan | null = continuing ? (priorLedger?.plan ?? null) : null
   let planTouchedThisRun = false
   const openPlanSteps = (): string[] =>
@@ -950,6 +979,16 @@ export async function runAgent(opts: RunOptions): Promise<void> {
         detail: request.detail,
         files: Array.isArray(payload?.diff) ? payload.diff : undefined,
       },
+      ...base(runId, threadId),
+    } as BaseEvent)
+  })
+
+  const detachResolution = onApprovalResolved(runId, (resolution) => {
+    if (!resolution.approved) permissionBlocked = true
+    emit({
+      type: EventType.CUSTOM,
+      name: 'loong.approval_resolved',
+      value: { id: resolution.id, decision: resolution.approved ? 'approve' : 'deny', reason: resolution.reason },
       ...base(runId, threadId),
     } as BaseEvent)
   })
@@ -1034,7 +1073,7 @@ export async function runAgent(opts: RunOptions): Promise<void> {
   const gate = async (
     name: string,
     input: Record<string, unknown>,
-    ctx: { toolCallId: string },
+    _ctx: { toolCallId: string },
   ): Promise<string | null> => {
     if (!GATED_TOOLS.has(name)) return null
     /* trust=ask always gates. Full trust does NOT: it only pauses when a
@@ -1066,40 +1105,39 @@ export async function runAgent(opts: RunOptions): Promise<void> {
 
     const { title, detail } = describeCall(name, input)
     const approved = await requestApproval(runId, { tool: name, title, detail, payload: input })
-    const decision = approved ? 'approve' : 'deny'
-    emit({
-      type: EventType.CUSTOM,
-      name: 'loong.approval_resolved',
-      value: { id: ctx.toolCallId, tool: name, decision },
-      ...base(runId, threadId),
-    } as BaseEvent)
     if (approved) return null
     /* record the refusal where the project can see it — the run stops here,
        and the reason is the only thing a hook can still add */
     await runHookEvent('PermissionDenied', { tool: name, input }, name)
-    return `The user denied permission to run ${name}. Do not retry it and do not look for another way to do the same thing. Tell the user what you would have done and stop.`
+    return `Permission was not granted to run ${name}. Do not retry it and do not look for another way to do the same thing. Tell the user what you would have done and stop.`
   }
 
   /* tools are rebuilt per run so each one closes over this run's identity and
      the approval broker knows who is asking */
-  const tools = Object.fromEntries(
-    allowedEntries.map(([name, def]) => {
+  const wrapTool = (name: string, def: { execute?: unknown; [key: string]: unknown }) => {
       const original = def.execute
       const execute = async (
         input: Record<string, unknown>,
         ctx: { toolCallId: string },
       ): Promise<string> => {
+        const rejected = (text: string, status: 'failed' | 'blocked' = 'failed') => {
+          const changed = observe(cycle, { tool: name, ok: false, input })
+          if (changed) emitCycle(cycle.previous)
+          emit({ type: EventType.CUSTOM, name: 'loong.tool_status',
+            value: { id: ctx.toolCallId, tool: name, status }, ...base(runId, threadId) } as BaseEvent)
+          return text
+        }
         /* the same call with the same arguments over and over is a flailing
            model burning a full context per repeat — cut it off */
         const sig = `${name}:${JSON.stringify(input)}`
         const seen = (callCounts.get(sig) ?? 0) + 1
         callCounts.set(sig, seen)
         if (seen > 3) {
-          return `You have called ${name} with the exact same arguments ${seen} times and it is not working. Stop repeating it — change your approach, or tell the user what is blocking you.`
+          return rejected(`Refused: you have called ${name} with the exact same arguments ${seen} times and it is not working. Stop repeating it — change your approach, or tell the user what is blocking you.`)
         }
         const refused = await gate(name, input, ctx)
-        if (refused) return refused
-        if (!original) return `${name} has no implementation.`
+        if (refused) return rejected(refused, 'blocked')
+        if (!original) return rejected(`Refused: ${name} has no implementation.`)
 
         /* the project's own PreToolUse hooks run before the lease is taken:
            they may refuse this call, or rewrite its input. A rewrite is a
@@ -1107,7 +1145,8 @@ export async function runAgent(opts: RunOptions): Promise<void> {
            it actually names, not the ones the model asked for. */
         const pre = await runPreToolUse(name, input)
         if (!pre.allow) {
-          return `A project hook refused ${name}: ${pre.reason ?? 'no reason given'}. Do not retry it and do not look for another way to do the same thing. Tell the user what you would have done and stop.`
+          permissionBlocked = true
+          return rejected(`A project hook refused ${name}: ${pre.reason ?? 'no reason given'}. Do not retry it and do not look for another way to do the same thing. Tell the user what you would have done and stop.`, 'blocked')
         }
         let effective = input
         if (
@@ -1117,7 +1156,7 @@ export async function runAgent(opts: RunOptions): Promise<void> {
         ) {
           effective = pre.updatedInput as Record<string, unknown>
           const regated = await gate(name, effective, ctx)
-          if (regated) return regated
+          if (regated) return rejected(regated, 'blocked')
         }
 
         /* the shell takes a command, not a path — so `resolveInside` cannot
@@ -1126,7 +1165,7 @@ export async function runAgent(opts: RunOptions): Promise<void> {
         if (name === 'shell') {
           const verdict = screenCommand(String((effective as { command?: unknown }).command ?? ''), getWorkspace())
           if (!verdict.ok) {
-            return `Refused: ${verdict.reason}. The agent may only work inside the open folder. If the task needs another folder, ask the reader to open it.`
+            return rejected(`Refused: ${verdict.reason}. The agent may only work inside the open folder. If the task needs another folder, ask the reader to open it.`, 'blocked')
           }
           /* A picture was already given to this model as a picture. Reaching for
              OCR after that is the signature of a model that cannot see, and the
@@ -1157,10 +1196,11 @@ export async function runAgent(opts: RunOptions): Promise<void> {
         const writePaths = WRITE_TOOLS.has(name) ? pathsFor(effective) : []
         const lease = writePaths.length > 0 ? await acquireWriteLease(runId, writePaths) : null
         if (writePaths.length > 0 && !lease) {
-          return `${name} is blocked: another session is editing ${writePaths.join(', ')}. Wait for that session to finish, or choose a different file, then retry once. Do not retry in a loop.`
+          return rejected(`${name} is blocked: another session is editing ${writePaths.join(', ')}. Wait for that session to finish, or choose a different file, then retry once. Do not retry in a loop.`, 'blocked')
         }
         try {
           toolStartedAt.set(ctx.toolCallId, Date.now())
+          const recordedBefore = name === 'run_code' ? filesForRun(runId).length : undefined
           const raw = await (original as (i: unknown, c: unknown) => unknown)(effective, ctx)
           /* a picture that reached the model is counted here, once */
           if (raw && typeof raw === 'object' && 'shotBase64' in (raw as object)) imagesSeen += 1
@@ -1185,7 +1225,7 @@ export async function runAgent(opts: RunOptions): Promise<void> {
           /* a receipt, not a log line: a command that talked to the network and
              did not fail is one thing that left the machine. The claim gate
              counts these, and the next run in the thread is told about them. */
-          if (name === 'shell' && !/^Command failed\./.test(String(out))) {
+          if (name === 'shell' && toolResultSucceeded(out)) {
             noteCommands(runId, [String((effective as { command?: unknown }).command ?? '')])
           }
           /* the HTTP tool submits too, and a submission made with it is the
@@ -1213,10 +1253,12 @@ export async function runAgent(opts: RunOptions): Promise<void> {
              the model's description of what it is doing. A refusal is a failed
              step; everything else is a step that happened. */
           {
-            const refusedResult =
-              typeof out === 'string' &&
-              /^(?:Refused:|The user denied|A project hook refused)/.test(out)
-            const changed = observe(cycle, { tool: name, ok: !refusedResult, input: effective })
+            const ok = toolResultSucceeded(out)
+            if (ok && ['shell', 'run_project', 'server_start', 'server_stop', 'desktop', 'git_commit'].includes(name)) operationalExecutions += 1
+            if (ok && WRITE_TOOLS.has(name)) latestAudit = null
+            const changed = observe(cycle, { tool: name, ok, input: effective,
+              ...(recordedBefore !== undefined ? { changed: filesForRun(runId).length > recordedBefore } : {}) })
+            emit({ type: EventType.CUSTOM, name: 'loong.tool_status', value: { id: ctx.toolCallId, tool: name, status: ok ? 'succeeded' : 'failed' }, ...base(runId, threadId) } as BaseEvent)
             if (changed) emitCycle(cycle.previous)
             if (name.startsWith('graph_')) {
               try {
@@ -1277,28 +1319,16 @@ export async function runAgent(opts: RunOptions): Promise<void> {
             editFails.delete(String((input as { path?: string }).path ?? '?'))
           }
           return framed
+        } catch (error) {
+          rejected(`Tool failed: ${error instanceof Error ? error.message : String(error)}`)
+          throw error
         } finally {
           lease?.release()
         }
       }
-      return [name, { ...def, execute }]
-    }),
-  ) as unknown as ToolSet
-
-  /* A per-run tool that still has to clear the gate. Without this it would
-     execute the moment the model asked for it. */
-  const gated = <T extends { execute?: unknown }>(name: string, def: T): T => {
-    const original = def.execute as (i: unknown, c: unknown) => unknown
-    return {
-      ...def,
-      execute: async (input: Record<string, unknown>, ctx: { toolCallId: string }) => {
-        const refused = await gate(name, input, ctx)
-        if (refused) return refused
-        const raw = await original(input, ctx)
-        return typeof raw === 'string' ? raw : JSON.stringify(raw)
-      },
-    } as T
+      return { ...def, execute }
   }
+  const tools = Object.fromEntries(allowedEntries) as unknown as ToolSet
 
   /* The three tools that only make sense for this run: asking a question,
      keeping the visible plan, and proposing a batch of writes. */
@@ -1326,13 +1356,11 @@ export async function runAgent(opts: RunOptions): Promise<void> {
     /* CodeAct: one small program instead of ten tool calls — a loop, a filter
        and three writes in a single step. The 288-call run is the reason.
        Gated: it can write any file in the workspace, so it asks first. */
-    ;(tools as Record<string, unknown>).run_code = gated(
-      'run_code',
-      createCodeTool(autoApprove, runId),
-    )
+    ;(tools as Record<string, unknown>).run_code = createCodeTool(autoApprove, runId)
     /* the last step before "done": each criterion, met or not, with evidence */
     ;(tools as Record<string, unknown>).audit = createAuditTool(
       (audit) => {
+        latestAudit = audit
         emit({
           type: EventType.CUSTOM,
           name: 'loong.audit',
@@ -1364,13 +1392,14 @@ export async function runAgent(opts: RunOptions): Promise<void> {
   const browserDef = TOOLS.browser
   const browserActions = ['click', 'type', 'evaluate']
   const browserOriginal = browserDef.execute
-  ;(tools as Record<string, unknown>).browser = withShot('browser', {
+  if (mode !== 'ask') (tools as Record<string, unknown>).browser = withShot('browser', {
     ...browserDef,
     execute: async (
       input: Record<string, unknown>,
       ctx: { toolCallId: string },
     ): Promise<string> => {
       const action = String(input.action ?? '')
+      if (mode === 'plan' && browserActions.includes(action)) return 'Refused: browser actions are unavailable in plan mode.'
       if (!browserActions.includes(action)) {
         return (browserOriginal as (i: unknown, c: unknown) => unknown)(input, ctx) as Promise<string>
       }
@@ -1385,20 +1414,8 @@ export async function runAgent(opts: RunOptions): Promise<void> {
         payload: input,
       })
       if (!approved) {
-        emit({
-          type: EventType.CUSTOM,
-          name: 'loong.approval_resolved',
-          value: { id: ctx.toolCallId, tool: 'browser', decision: 'deny' },
-          ...base(runId, threadId),
-        } as BaseEvent)
         return `The user denied the browser action "${action}". Do not retry it. Read the page with snapshot instead, and tell the user what you would have done.`
       }
-      emit({
-        type: EventType.CUSTOM,
-        name: 'loong.approval_resolved',
-        value: { id: ctx.toolCallId, tool: 'browser', decision: 'approve' },
-        ...base(runId, threadId),
-      } as BaseEvent)
       return (browserOriginal as (i: unknown, c: unknown) => unknown)(input, ctx) as Promise<string>
     },
   })
@@ -1440,9 +1457,7 @@ export async function runAgent(opts: RunOptions): Promise<void> {
     const forked = req.scope === 'fork'
     const childModel = resolveModel({
       ...opts.config,
-      model: forked
-        ? opts.config.model
-        : MODEL_FALLBACKS[opts.config.provider]?.[0] ?? opts.config.model,
+      model: opts.config.model,
     })
     const childTools = Object.fromEntries(
       (SUBAGENT_TOOLS as readonly string[])
@@ -1549,6 +1564,13 @@ export async function runAgent(opts: RunOptions): Promise<void> {
     )
   }
 
+  /* Assemble first, then wrap EVERY offered tool exactly once. Per-run and MCP
+     tools must produce the same cycle, hook, trace and evidence records as the
+     static file tools. */
+  for (const [name, definition] of Object.entries(tools)) {
+    (tools as Record<string, unknown>)[name] = wrapTool(name, definition as never)
+  }
+
   /* the trust level is announced first, so the interface can show whether this
      run will stop before each write or just do the work */
   emit({
@@ -1604,7 +1626,19 @@ export async function runAgent(opts: RunOptions): Promise<void> {
         emitNotice(
           `A UserPromptSubmit hook refused this prompt: ${submit.reason ?? 'no reason given'}. The run was not started.`,
         )
-        emit({ type: EventType.RUN_FINISHED, ...base(runId, threadId) } as BaseEvent)
+        const result = { status: 'blocked', reason: submit.reason ?? 'A project hook refused the request.',
+          model: opts.config.model, checks: { status: 'not_run' } }
+        emit({ type: EventType.CUSTOM, name: 'loong.outcome', value: result, ...base(runId, threadId) } as BaseEvent)
+        emit({ type: EventType.RUN_FINISHED, result, ...base(runId, threadId) } as BaseEvent)
+        writeLedger({ threadId, task: taskText, plan: latestPlan, files: [], writes: 0, checks: 0,
+          failures: 0, steps: 0, outcome: 'blocked', note: result.reason })
+        detach()
+        detachResolution()
+        detachQuestion()
+        cancelRunApprovals(runId)
+        cancelRunQuestions(runId)
+        setCurrentRun(null)
+        endTrace(runId, { promptTokens: 0, completionTokens: 0, outcome: 'error', error: result.reason })
         return
       }
       if (submit.context) sessionHooks += `\n\n${submit.context}`
@@ -1642,19 +1676,10 @@ export async function runAgent(opts: RunOptions): Promise<void> {
      and poolside/laguna, which read as "Loong changed my model". So: fall back
      only when the chosen model is free, or the provider is the local one. */
   const chosen = opts.config.model
-  const mayFallBack = mayFallBackFor(chosen, opts.config.provider)
-  /* route: 'manual' pins the chosen model — no escalation, even onto a free
-     fallback. 'auto' (the default) keeps the existing fallback behaviour. */
-  const route = opts.route ?? 'auto'
-  const modelChain =
-    route === 'manual'
-      ? [chosen]
-      : mayFallBack
-        ? [chosen, ...MODEL_FALLBACKS[opts.config.provider].filter((m) => m !== chosen)]
-        : [chosen]
+  const route = opts.route ?? 'manual'
+  const modelChain = [chosen, ...fallbackModelsFor(opts.config, { route })]
   /** the model this attempt runs on: the chosen one, then the fallbacks in order */
-  const modelFor = (attempt: number): string =>
-    modelChain[Math.min(attempt - 1, modelChain.length - 1)]
+  const modelFor = (index: number): string => modelChain[Math.min(index, modelChain.length - 1)]
 
   /** the tokens of the last attempt that finished — the trace reads them.
       A ref object, because a plain `let` assigned inside the closure below is
@@ -1673,6 +1698,7 @@ export async function runAgent(opts: RunOptions): Promise<void> {
      streams ("can only afford 20764"). 8192 covers a long codegen answer, and
      the credit path below lowers it further if the account is smaller still. */
   let outputCap = 8192
+  const totalUsage = { input: 0, output: 0 }
 
   /* The mailbox is read ONCE per run. busBlock marks what it returns as seen,
      so calling it from inside the stream loop would leave the second call with
@@ -1681,7 +1707,99 @@ export async function runAgent(opts: RunOptions): Promise<void> {
   /** the assistant's own words — what the digest keeps after the run settles */
   let answerText = ''
 
-  const runOnce = async (attempt = 1): Promise<AttemptResult> => {
+  let securityScannedStep = -1
+  let securityCritical = false
+  let securityRepairAttempts = 0
+  let securityFindingLocations: string[] = []
+  const inspectSecurity = () => {
+    /* the security gate: deterministic, so it protects the user even when the
+       model is weak. Scans the files this run wrote and reports real findings. */
+    if (opts.securityScan && securityScannedStep !== cycle.lastWriteStep) {
+      securityScannedStep = cycle.lastWriteStep
+      securityCritical = false
+      try {
+        const findings = scanPaths(filesForRun(runId))
+        if (findings.length > 0) {
+          const critical = hasCritical(findings)
+          securityCritical = critical
+          securityFindingLocations = findings.map((finding) => `${finding.file}:${finding.line} ${finding.rule}`).slice(0, 8)
+          /* the ledger is what stops the same finding being reported as news on
+             every run: it remembers the first sighting and reopens a regression */
+          const recorded = recordFindings(findings)
+          for (const f of findings.slice(0, 8)) {
+            emit({
+              type: EventType.CUSTOM,
+              name: 'loong.finding',
+              value: {
+                severity: f.severity,
+                rule: f.rule,
+                file: f.file,
+                line: f.line,
+                snippet: f.snippet,
+                kb: kbForRule(f.rule)?.id ?? null,
+              },
+              ...base(runId, threadId),
+            } as BaseEvent)
+          }
+          emit({
+            type: EventType.CUSTOM,
+            name: 'loong.findings',
+            value: {
+              open: recorded.open,
+              critical: recorded.critical,
+              added: recorded.added,
+              revived: recorded.revived,
+            },
+            ...base(runId, threadId),
+          } as BaseEvent)
+          emit({
+            type: EventType.CUSTOM,
+            name: 'loong.audit',
+            value: {
+              verdict: critical ? 'not_met' : 'partial',
+              items: findings.map((f) => ({
+                criterion: `${f.severity} · ${f.rule}`,
+                met: false,
+                evidence: `${f.file}:${f.line} — ${f.snippet}`,
+              })),
+              note: `Automatic security scan of the files this run changed: ${findings.length} finding(s)${critical ? ' — fix the critical ones before shipping' : ''}.`,
+            },
+            ...base(runId, threadId),
+          } as BaseEvent)
+          emit({
+            type: EventType.CUSTOM,
+            name: 'loong.notice',
+            value: {
+              text: `Security gate: ${findings.length} finding(s)${critical ? ' — critical, do not ship' : ''}.`,
+            },
+            ...base(runId, threadId),
+          } as BaseEvent)
+        }
+      } catch {
+        /* The scan is optional; errors remain visible without claiming its result. */
+        emitNotice('The optional security scan could not run; no security result is claimed.')
+      }
+    }
+    return securityCritical
+  }
+
+  let terminalEmitted = false
+  const emitTerminal = (status: RunStatus, reason: string,
+    usage: { inputTokens?: number; outputTokens?: number } | null = usageRef.current) => {
+    if (terminalEmitted) return
+    terminalEmitted = true
+    runStatus = status
+    statusReason = reason
+    const result = { status, reason, model: lastModel,
+      promptTokens: usage?.inputTokens ?? 0, completionTokens: usage?.outputTokens ?? 0,
+      checks: lastCheck ? { status: lastCheck.ok ? 'passed' : 'failed', command: lastCheck.command,
+        label: lastCheck.label, seconds: lastCheck.seconds } : { status: cycle.verifications > 0 && !missingEvidence(cycle) ? 'passed' : 'not_run' },
+      openSteps: openPlanSteps().length, files: filesForRun(runId) }
+    emit({ type: EventType.CUSTOM, name: 'loong.outcome', value: result, ...base(runId, threadId) } as BaseEvent)
+    emit({ type: EventType.RUN_FINISHED, result, ...base(runId, threadId) } as BaseEvent)
+  }
+
+  const runOnce = async (): Promise<AttemptResult> => {
     let produced = false
     /* repetition guard: a model that starts repeating a sentence will repeat it
        for thousands of tokens. The kernel watches the stream and stops the pass
@@ -1741,9 +1859,12 @@ export async function runAgent(opts: RunOptions): Promise<void> {
     try {
       const activeConfig: ProviderConfig = {
         ...opts.config,
-        model: modelFor(attempt),
+        model: modelFor(modelIdx),
       }
       const model = opts.model ?? resolveModel(activeConfig)
+      const limits = modelLimits(activeConfig)
+      const effectiveOutputCap = Math.min(outputCap, limits.output ?? outputCap)
+      emit({ type: EventType.CUSTOM, name: 'loong.model', value: { provider: activeConfig.provider, model: activeConfig.model, route }, ...base(runId, threadId) } as BaseEvent)
       /* the tokens of the last completed pass, kept across Stop-hook
          continuations so the trace reports the run that actually happened */
       let lastUsage: { inputTokens?: number; outputTokens?: number } | null = null
@@ -1752,10 +1873,11 @@ export async function runAgent(opts: RunOptions): Promise<void> {
          appends a turn and the loop runs again — bounded, so a misbehaving
          hook cannot spin the run forever. */
       for (;;) {
+        if (stepsUsed >= runBudget) return { ok: false, empty: false, error: null, budget: true }
         const history = (imagesDropped ? withoutImages(turns) : turns) ?? turns
         /* sum usage across every step of this pass — a multi-step agent run is
            many model calls, and reporting only the last one is dishonest */
-        const usageAccum = { input: 0, output: 0 }
+        const usageAccum = totalUsage
 
         /* Compaction is a visible event, not a silent trim: a project that
            depends on what was said earlier needs to know when detail is about
@@ -1777,10 +1899,11 @@ export async function runAgent(opts: RunOptions): Promise<void> {
            before each step. */
         const baseSystem =
           systemPrompt(mode, { sessionHooks, userName: opts.userName, agentBus: agentInbox }) +
+          (mode === 'agent' ? `\n\nCurrent permission setting: ${autoApprove ? 'Full trust: tools run inside the authorized workspace without asking for each ordinary edit or command. Execute the requested work; do not ask the user to run your tools for you. Existing boundaries and any explicit approval gates still apply.' : 'Ask first: call the appropriate tool and its approval card will request permission. Do not replace the task with instructions for the user.'}` : '') +
           skillsBlock(taskText) +
           /* the request, compiled: objective, deliverable, constraints, proof.
              Deterministic, so it costs nothing and cannot drift. */
-          briefBlock(compileBrief(taskText)) +
+          briefBlock(requestBrief) +
           /* what the previous run in this thread actually did — the plan,
              the open steps and the files it changed. Without it, "continue"
              means "re-read everything", and the budget dies in recon. */
@@ -1803,7 +1926,10 @@ export async function runAgent(opts: RunOptions): Promise<void> {
           system: stepSystem,
           tools,
           turns: history,
-          maxSteps: Math.max(1, Math.min(MAX_STEPS, RUN_MAX_STEPS - stepsUsed)),
+          onCheckpoint: opts.onCheckpoint,
+          maxOutputTokens: effectiveOutputCap,
+          contextWindowTokens: limits.context ?? undefined,
+          maxSteps: Math.max(1, Math.min(MAX_STEPS, runBudget - stepsUsed)),
           abortSignal: localAbort.signal,
           emit,
           onStep: () => noteStep(runId),
@@ -1811,6 +1937,7 @@ export async function runAgent(opts: RunOptions): Promise<void> {
           checkLoop: looksLikeLoop,
           errorRetryable: isRetryable,
         })
+        lastModel = outcome.actualModel ?? activeConfig.model
         stepsUsed += outcome.steps
         usageAccum.input += outcome.usage?.inputTokens ?? 0
         usageAccum.output += outcome.usage?.outputTokens ?? 0
@@ -1830,7 +1957,7 @@ export async function runAgent(opts: RunOptions): Promise<void> {
            while it is still warm. */
         if (outcome.stepLimit) {
           const spent = stepsUsed
-          const remaining = RUN_MAX_STEPS - spent
+          const remaining = runBudget - spent
           if (remaining > 0 && outcome.steps > 0 && budgetContinues < MAX_BUDGET_CONTINUES) {
             budgetContinues += 1
             const claim = claimGate(outcome.text)
@@ -1855,10 +1982,14 @@ export async function runAgent(opts: RunOptions): Promise<void> {
             dropImages(activeConfig.model)
             return { ok: false, empty: false, error: outcome.error, retryNow: true }
           }
+          const affordable = /can only afford\s+(\d+)/i.exec(outcome.error)
+          if (affordable && Number(affordable[1]) > 512 && Number(affordable[1]) < outputCap) {
+            outputCap = Number(affordable[1]) - 256
+            return { ok: false, empty: false, error: outcome.error, retryNow: true }
+          }
           return { ok: false, empty: false, error: outcome.error }
         }
         if (outcome.empty) return { ok: false, empty: true, error: null }
-        lastModel = activeConfig.model
 
 
         if (repetition) {
@@ -1874,6 +2005,50 @@ export async function runAgent(opts: RunOptions): Promise<void> {
         lastUsage = passUsage
 
         if (mode === 'ask' || opts.abortSignal?.aborted) break
+
+        /* Verification belongs inside the loop, before any terminal event. A
+           failed command is a new turn the model can act on, not an afterthought
+           printed after it has been declared successful. */
+        const changedFiles = filesForRun(runId)
+        const verify = changedFiles.length > 0 ? detectVerify(getWorkspace()) : null
+        const decision = gateDecision({ changedFiles, mode, autoApprove,
+          aborted: !!opts.abortSignal?.aborted, repairsDone, verify })
+        if (decision.action === 'check' &&
+          (verifiedWriteStep !== cycle.lastWriteStep || lastCheck?.ok === false)) {
+          const checkedWriteStep = cycle.lastWriteStep
+          const check = await runProjectCheck(decision.verify, getWorkspace(), undefined, opts.abortSignal)
+          lastCheck = { ...check, command: decision.verify.cmd, label: decision.verify.label }
+          verifiedWriteStep = checkedWriteStep
+          observe(cycle, { tool: 'run_verification', ok: check.ok, input: { command: decision.verify.cmd } })
+          emitCycle(cycle.previous)
+          emit({ type: EventType.CUSTOM, name: 'loong.checks',
+            value: { ok: check.ok, status: check.ok ? 'passed' : 'failed', label: decision.verify.label,
+              command: decision.verify.cmd, seconds: check.seconds, output: firstLines(check.output),
+              writeStep: checkedWriteStep }, ...base(runId, threadId) } as BaseEvent)
+          if (!check.ok) {
+            emitNotice(failDetail(decision.verify, check))
+            if (decision.repair && stepsUsed < runBudget) {
+              repairsDone += 1
+              turns.push({ role: 'user', content: repairTurn(decision.verify, check) })
+              continue
+            }
+            runStatus = 'partial'
+            statusReason = 'The project check still fails after the repair budget.'
+            break
+          }
+        }
+
+        if (inspectSecurity()) {
+          if (securityRepairAttempts < 1 && stepsUsed < runBudget) {
+            securityRepairAttempts += 1
+            turns.push({ role: 'user', content: '[security check] Critical findings remain in files changed by this run: ' +
+              securityFindingLocations.join('; ') + '. Inspect and fix these issues before claiming completion, then verify the changes.' })
+            continue
+          }
+          runStatus = 'partial'
+          statusReason = 'Critical security findings remain in the changed files.'
+          break
+        }
 
         /* No evidence, no done. A run that changed files and never saw a
            passing check gets one turn back — bounded, because a model that
@@ -1902,6 +2077,24 @@ export async function runAgent(opts: RunOptions): Promise<void> {
           }
         }
 
+        const noImplementation = (implementationTask && cycle.writes === 0 && changedFiles.length === 0 && !auditEvidence()) || (operationalTask && operationalExecutions === 0)
+        if (noImplementation && !permissionBlocked && completionNudges < 1 && stepsUsed < runBudget) {
+          completionNudges += 1
+          turns.push({ role: 'user', content:
+            '[completion gate] This task requires an implementation or operation, but this run has no recorded deliverable. Continue with the requested change and verify it. If the requested behavior already exists, inspect it and provide an audit with concrete evidence; if blocked, say what is missing. A promise to implement later is not completion.' })
+          emitNotice('Completion gate: the requested implementation has no recorded deliverable — continuing the task.')
+          continue
+        }
+
+        const missingTaskContract = implementationTask && requestBrief.wantsPlan &&
+          (!latestPlan || (latestPlan.doneWhen?.length ?? 0) === 0)
+        if (missingTaskContract && !contractNudged && !permissionBlocked && stepsUsed < runBudget) {
+          contractNudged = true
+          turns.push({ role: 'user', content: '[task contract gate] This is a substantial implementation request. Before calling it complete, record the complete requested scope in update_plan with done_when acceptance criteria and the actual status of every step. Then verify each criterion and finish the remaining work. A small passing edit does not establish that the whole request was delivered.' })
+          emitNotice('Task contract gate: the substantial request needs explicit acceptance criteria before completion.')
+          continue
+        }
+
         if (mode === 'agent') {
           /* No open plan, no silent stop. A run that inherited or wrote a plan
              and then ended with every step still open and no file changed has
@@ -1910,16 +2103,16 @@ export async function runAgent(opts: RunOptions): Promise<void> {
              stop itself is honest: "stopped short", not "completed". */
           const open = openPlanSteps()
           const planIsCurrent = planTouchedThisRun || continuing
-          if (!planNudged && planIsCurrent && open.length > 0 && cycle.writes === 0) {
+          if (!planNudged && planIsCurrent && open.length > 0 && stepsUsed < runBudget) {
             planNudged = true
             stopContinues += 1
             const list = open.slice(0, 5).map((s) => `"${s}"`).join(', ')
             turns.push({
               role: 'user',
-              content: `[plan gate] Your plan still has ${open.length} open step(s): ${list}. You have not changed a file in this run. Do the next step now with a real write, or use update_plan to mark a step blocked and say why. Do not answer with a summary first.`,
+              content: `[plan gate] Your plan still has ${open.length} open step(s): ${list}. Finish the remaining work with the appropriate tools, or use update_plan to mark a step blocked and say why. Do not answer with a summary first.`,
             })
             emitNotice(
-              `Plan gate: ${open.length} step(s) still open and no file changed — the run was sent back to do the work.`,
+              `Plan gate: ${open.length} step(s) still open — the run was sent back to finish the remaining work.`,
             )
             emitCycle(cycle.phase)
             continue
@@ -1940,6 +2133,14 @@ export async function runAgent(opts: RunOptions): Promise<void> {
             emitNotice('The run ended without an answer — asked the model for the result before closing it.')
             continue
           }
+        }
+
+        const needsAcceptanceAudit = mode === 'agent' && (latestPlan?.doneWhen?.length ?? 0) > 0 &&
+          (!latestAudit || latestAudit.verdict !== 'met' || latestAudit.items.some((item) => !item.met))
+        if (needsAcceptanceAudit && !acceptanceNudged && openPlanSteps().length === 0 && stepsUsed < runBudget) {
+          acceptanceNudged = true
+          turns.push({ role: 'user', content: '[acceptance gate] The plan declares acceptance criteria but they have no complete audit after the latest changes. Use audit with concrete file/check evidence for every criterion, or state which requirement is incomplete. Do not claim completion without that evidence.' })
+          continue
         }
 
         if (stopContinues >= MAX_STOP_CONTINUES) break
@@ -1970,26 +2171,36 @@ export async function runAgent(opts: RunOptions): Promise<void> {
       /* an empty answer is not a completion: the reader has nothing to read */
       if (!produced || !streamedText.trim()) return { ok: false, empty: true, error: null }
 
+      if (opts.abortSignal?.aborted) {
+        runStatus = 'cancelled'
+        statusReason = 'The run was cancelled.'
+      } else if (permissionBlocked) {
+        runStatus = 'blocked'
+        statusReason = 'An operation did not receive permission.'
+      } else if (runStatus !== 'partial' && mode === 'agent') {
+        const noDeliverable = (implementationTask && cycle.writes === 0 && filesForRun(runId).length === 0 && !auditEvidence()) || (operationalTask && operationalExecutions === 0)
+        const open = (planTouchedThisRun || continuing) ? openPlanSteps() : []
+        const blockedSteps = latestPlan?.steps.filter((step) => step.status === 'blocked') ?? []
+        const contractMissing = implementationTask && requestBrief.wantsPlan && (!latestPlan || !latestPlan.doneWhen?.length)
+        const auditIncomplete = (latestAudit && (latestAudit.verdict !== 'met' || latestAudit.items.some((item) => !item.met))) ||
+          ((latestPlan?.doneWhen?.length ?? 0) > 0 && !latestAudit)
+        if (open.length > 0 || blockedSteps.length > 0 || contractMissing || auditIncomplete || noDeliverable || missingEvidence(cycle)) {
+          runStatus = blockedSteps.length > 0 ? 'blocked' : 'partial'
+          statusReason = blockedSteps.length > 0 ? `${blockedSteps.length} plan step(s) are blocked.`
+            : open.length > 0 ? `${open.length} plan step(s) remain open.`
+            : contractMissing ? 'The substantial request has no recorded scope and acceptance criteria.'
+            : auditIncomplete ? 'The declared acceptance criteria do not have a complete audit after the latest changes.'
+            : noDeliverable ? 'No implementation or operation was recorded for the request.'
+            : 'The changed files have no passing verification after the latest edit.'
+        }
+      }
+
       const usage = lastUsage
       /* the trace needs the tokens, and they only exist here */
       usageRef.current = usage
       /* and the digest keeps the answer, not the retries that preceded it */
       answerText = streamedText
-      emit({
-        type: EventType.RUN_FINISHED,
-        ...base(runId, threadId),
-        ...(usage
-          ? {
-              result: {
-                promptTokens: usage.inputTokens ?? 0,
-                completionTokens: usage.outputTokens ?? 0,
-                /* the model that actually ran — the header shows this, not
-                   the saved setting, so auto/deep/fast are honest */
-                model: lastModel,
-              },
-            }
-          : {}),
-      } as BaseEvent)
+      emitTerminal(runStatus, statusReason, usage)
       return { ok: true, empty: false, error: null }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
@@ -2039,18 +2250,18 @@ export async function runAgent(opts: RunOptions): Promise<void> {
        does not need one — the answer is the result. A stopped-short run does:
        the plan says open work, and that must not look like a finish. */
     const emitStop = (success: boolean) => {
-      const budgetSpent = stepsUsed >= RUN_MAX_STEPS
+      const budgetSpent = stepsUsed >= runBudget
       const openAtStop = mode === 'agent' ? openPlanSteps() : []
       const stoppedShort =
         !opts.abortSignal?.aborted &&
-        cycle.writes === 0 &&
-        openAtStop.length > 0 &&
+        (runStatus === 'partial' || openAtStop.length > 0) &&
+        (openAtStop.length > 0 || implementationTask) &&
         (planTouchedThisRun || continuing)
       const reason = opts.abortSignal?.aborted
         ? 'aborted'
         : budgetSpent && !success
           ? 'step-limit'
-          : stoppedShort
+          : stoppedShort || runStatus === 'partial' || runStatus === 'blocked'
             ? 'stopped-short'
             : success
               ? null
@@ -2062,7 +2273,7 @@ export async function runAgent(opts: RunOptions): Promise<void> {
         value: {
           reason,
           model: lastModel,
-          ...(reason === 'step-limit' ? { steps: stepsUsed, budget: RUN_MAX_STEPS } : {}),
+          ...(reason === 'step-limit' ? { steps: stepsUsed, budget: runBudget } : {}),
           ...(reason === 'stopped-short' ? { openSteps: openAtStop.length } : {}),
         },
         ...base(runId, threadId),
@@ -2072,7 +2283,7 @@ export async function runAgent(opts: RunOptions): Promise<void> {
           type: EventType.CUSTOM,
           name: 'loong.notice',
           value: {
-            text: `Stopped at the ${RUN_MAX_STEPS}-step budget (${stepsUsed} steps used) — the task needed more turns. Send "continue" to pick it up, or split the task into smaller pieces.`,
+            text: `Stopped at the ${runBudget}-step budget (${stepsUsed} steps used) — the task needed more turns. Send "continue" to pick it up, or split the task into smaller pieces.`,
           },
           ...base(runId, threadId),
         } as BaseEvent)
@@ -2080,7 +2291,7 @@ export async function runAgent(opts: RunOptions): Promise<void> {
     }
     for (let attempt = 1; attempt <= attemptBudget; attempt++) {
       lastModel = modelChain[modelIdx]
-      const result = await runOnce(attempt)
+      const result = await runOnce()
       if (result.ok) {
         emitStop(true)
         return
@@ -2092,6 +2303,8 @@ export async function runAgent(opts: RunOptions): Promise<void> {
       /* the step budget ran out. That is a named stop with a way forward, not a
          provider fault — retrying it would just spend the same budget again */
       if (result.budget) {
+        runStatus = 'budget_exhausted'
+        statusReason = 'The run exhausted its step budget.'
         emitStop(false)
         return
       }
@@ -2127,7 +2340,7 @@ export async function runAgent(opts: RunOptions): Promise<void> {
           result.error ?? '',
         )
       const freeAhead =
-        attempt < attemptBudget && modelFor(attempt + 1).endsWith(':free')
+        attempt < attemptBudget && modelIdx + 1 < modelChain.length && modelFor(modelIdx + 1).endsWith(':free')
       const creditSkip = creditBlocked && freeAhead
       /* A free pool that is full is a fact about the model's HOST, not a
          congestion of the moment: waiting three seconds and asking the same
@@ -2157,6 +2370,7 @@ export async function runAgent(opts: RunOptions): Promise<void> {
          "Failed after 2 attempts" — the interruption the user kept hitting.
 
          A credit or capability block is a fault of the MODEL: switch at once. */
+      const previousModelIdx = modelIdx
       const transient =
         result.empty ||
         (isRetryable(result.error ?? '') && !capabilityBlocked && !creditBlocked && !poolBlocked)
@@ -2175,14 +2389,16 @@ export async function runAgent(opts: RunOptions): Promise<void> {
         name: 'loong.retry',
         value: {
           attempt: attempt + 1,
-          of: MAX_ATTEMPTS,
+          of: attemptBudget,
           waitMs: wait,
           reason: creditSkip
             ? 'the account has no credit for that model — moving to a free one'
-            : poolBlocked
-              ? 'the free pool for that model is full — moving to the next model'
+            : poolBlocked && modelIdx !== previousModelIdx
+              ? 'the free pool for that model is full — moving to the next permitted model'
+              : transient && modelIdx === previousModelIdx
+              ? 'the provider was busy — retrying the same model after a pause'
               : transient
-              ? 'the provider was busy — the same model, after a pause'
+                ? 'the model remained unavailable — moving to the next permitted model'
               : result.empty
                 ? 'the model returned nothing'
                 : result.error,
@@ -2238,9 +2454,14 @@ export async function runAgent(opts: RunOptions): Promise<void> {
     /* The state the next run in this thread starts from — the plan, the open
        steps, the files that changed, the checks. The digest keeps the words;
        this keeps the work. */
+    if (!terminalEmitted) {
+      if (opts.abortSignal?.aborted) emitTerminal('cancelled', 'The run was cancelled.')
+      else if (stepsUsed >= runBudget) emitTerminal('budget_exhausted', 'The run exhausted its step budget.')
+      else if (fatal) emitTerminal('failed', fatal)
+      else emitTerminal(runStatus, statusReason)
+    }
     if (opts.threadId) {
       try {
-        const open = openPlanSteps()
         writeLedger({
           threadId: opts.threadId,
           task: taskText,
@@ -2251,11 +2472,7 @@ export async function runAgent(opts: RunOptions): Promise<void> {
           failures: cycle.failures,
           steps: stepsUsed,
           deliveries: deliveriesFor(runId),
-          outcome: !answerText.trim()
-            ? 'failed'
-            : open.length > 0 && cycle.writes === 0 && (planTouchedThisRun || continuing)
-              ? 'stopped-short'
-              : 'completed',
+          outcome: fatal ? 'failed' : opts.abortSignal?.aborted ? 'cancelled' : runStatus,
           note: answerText,
         })
       } catch {
@@ -2263,6 +2480,7 @@ export async function runAgent(opts: RunOptions): Promise<void> {
       }
     }
     detach()
+    detachResolution()
     detachQuestion()
     cancelRunApprovals(runId)
     cancelRunQuestions(runId)
@@ -2273,120 +2491,6 @@ export async function runAgent(opts: RunOptions): Promise<void> {
     /* and the shell it opened goes with it — nothing runs behind the user */
     void killShell(runId)
     void stopProject(runId)
-    /* the security gate: deterministic, so it protects the user even when the
-       model is weak. Scans the files this run wrote and reports real findings. */
-    if (opts.securityScan) {
-      try {
-        const findings = scanPaths(filesForRun(runId))
-        if (findings.length > 0) {
-          const critical = hasCritical(findings)
-          /* the ledger is what stops the same finding being reported as news on
-             every run: it remembers the first sighting and reopens a regression */
-          const recorded = recordFindings(findings)
-          for (const f of findings.slice(0, 8)) {
-            emit({
-              type: EventType.CUSTOM,
-              name: 'loong.finding',
-              value: {
-                severity: f.severity,
-                rule: f.rule,
-                file: f.file,
-                line: f.line,
-                snippet: f.snippet,
-                kb: kbForRule(f.rule)?.id ?? null,
-              },
-              ...base(runId, threadId),
-            } as BaseEvent)
-          }
-          emit({
-            type: EventType.CUSTOM,
-            name: 'loong.findings',
-            value: {
-              open: recorded.open,
-              critical: recorded.critical,
-              added: recorded.added,
-              revived: recorded.revived,
-            },
-            ...base(runId, threadId),
-          } as BaseEvent)
-          emit({
-            type: EventType.CUSTOM,
-            name: 'loong.audit',
-            value: {
-              verdict: critical ? 'not_met' : 'partial',
-              items: findings.map((f) => ({
-                criterion: `${f.severity} · ${f.rule}`,
-                met: false,
-                evidence: `${f.file}:${f.line} — ${f.snippet}`,
-              })),
-              note: `Automatic security scan of the files this run changed: ${findings.length} finding(s)${critical ? ' — fix the critical ones before shipping' : ''}.`,
-            },
-            ...base(runId, threadId),
-          } as BaseEvent)
-          emit({
-            type: EventType.CUSTOM,
-            name: 'loong.notice',
-            value: {
-              text: `Security gate: ${findings.length} finding(s)${critical ? ' — critical, do not ship' : ''}.`,
-            },
-            ...base(runId, threadId),
-          } as BaseEvent)
-        }
-      } catch {
-        /* a gate that cannot run must never fail the user's task */
-      }
-    }
-    /* the verify gate: a run that wrote code and never checked it claims
-       success without proof. In full trust the project's own command runs
-       now — silent when it passes (a passing build is not news, and its
-       output would only flood the context), loud with the first error lines
-       when it fails. In ask-mode nothing executes unasked. */
-    if (autoApprove && !opts.abortSignal?.aborted) {
-      try {
-        const verify = filesForRun(runId).length > 0 ? detectVerify(getWorkspace()) : null
-        if (verify) {
-          const started = Date.now()
-          const emitChecks = (ok: boolean, detail: string) => {
-            emit({
-              type: EventType.CUSTOM,
-              name: 'loong.checks',
-              value: { ok, label: verify.label },
-              ...base(runId, threadId),
-            } as BaseEvent)
-            emit({
-              type: EventType.CUSTOM,
-              name: 'loong.notice',
-              value: { text: detail },
-              ...base(runId, threadId),
-            } as BaseEvent)
-          }
-          try {
-            await execAsync(verify.cmd, {
-              cwd: getWorkspace(),
-              timeout: CHECK_TIMEOUT_MS,
-              maxBuffer: 8 * 1024 * 1024,
-              windowsHide: true,
-              shell: process.platform === 'win32' ? 'cmd.exe' : '/bin/sh',
-            })
-            emitChecks(
-              true,
-              `Checks: ${verify.label} passed in ${((Date.now() - started) / 1000).toFixed(1)}s.`,
-            )
-          } catch (err) {
-            const e = err as { killed?: boolean; stdout?: string; stderr?: string; message?: string }
-            const out = [e.stdout, e.stderr].filter(Boolean).join('\n').trim()
-            const first = out.split('\n').slice(0, 6).join('\n')
-            const killed = e.killed ? ' (timed out)' : ''
-            emitChecks(
-              false,
-              `Checks: ${verify.label} FAILED${killed}.\n${first || e.message || 'no output'}`,
-            )
-          }
-        }
-      } catch {
-        /* no check is better than a wrong one — never fail the run on it */
-      }
-    }
     /* the next cycle starts from a graph that matches the files on disk */
     if (!opts.abortSignal?.aborted && mode === 'agent' && haveWorkspace()) {
       refreshInBackground()
@@ -2395,13 +2499,13 @@ export async function runAgent(opts: RunOptions): Promise<void> {
     endTrace(runId, {
       promptTokens: usageRef.current?.inputTokens ?? 0,
       completionTokens: usageRef.current?.outputTokens ?? 0,
-      outcome: opts.abortSignal?.aborted ? 'aborted' : fatal ? 'error' : 'ok',
+      outcome: opts.abortSignal?.aborted ? 'aborted' : fatal || runStatus !== 'completed' ? 'error' : 'ok',
       error: fatal ?? undefined,
     })
     /* the last word: the run is over, whichever way it ended */
     try {
       await runHookEvent('SessionEnd', {
-        outcome: opts.abortSignal?.aborted ? 'aborted' : fatal ? 'error' : 'ok',
+        outcome: opts.abortSignal?.aborted ? 'aborted' : fatal || runStatus !== 'completed' ? runStatus : 'ok',
         error: fatal ?? null,
       })
     } catch {

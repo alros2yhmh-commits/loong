@@ -96,6 +96,30 @@ test('an interrupted run with no writes never trips the gate', () => {
   assert.equal(missingEvidence(c), false)
 })
 
+test('a refused write is never counted as an implementation', () => {
+  const cycle = createCycle()
+  observe(cycle, { tool: 'write_file', ok: false })
+  assert.equal(cycle.writes, 0)
+  assert.equal(missingEvidence(cycle), false)
+})
+
+test('a later failing check invalidates an earlier passing check', () => {
+  const cycle = createCycle()
+  observe(cycle, { tool: 'write_file', ok: true })
+  observe(cycle, { tool: 'run_verification', ok: true })
+  assert.equal(missingEvidence(cycle), false)
+  observe(cycle, { tool: 'run_verification', ok: false })
+  assert.equal(missingEvidence(cycle), true)
+})
+
+test('interactive terminal output alone does not prove a test command exited successfully', () => {
+  const cycle = createCycle()
+  observe(cycle, { tool: 'write_file', ok: true })
+  observe(cycle, { tool: 'terminal', ok: true, input: { action: 'run', command: 'npm test' } })
+  assert.equal(cycle.verifications, 0)
+  assert.equal(missingEvidence(cycle), true)
+})
+
 test('the payload carries the phase list and live counts', () => {
   const c = createCycle(1000)
   observe(c, { tool: 'read_file', ok: true }, 1001)

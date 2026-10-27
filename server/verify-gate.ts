@@ -75,12 +75,14 @@ export async function runProjectCheck(
   verify: VerifyCommand,
   cwd: string,
   timeoutMs = CHECK_TIMEOUT_MS,
+  abortSignal?: AbortSignal,
 ): Promise<CheckResult> {
   const started = Date.now()
   try {
     const { stdout, stderr } = await execAsync(verify.cmd, {
       cwd,
       timeout: timeoutMs,
+      signal: abortSignal,
       maxBuffer: 8 * 1024 * 1024,
       windowsHide: true,
       shell: process.platform === 'win32' ? 'cmd.exe' : '/bin/sh',

@@ -32,7 +32,7 @@ export interface RunLedger {
       a benchmark must not re-submit what is already submitted, and must not
       claim a total it has not reached. */
   deliveries?: Delivery[]
-  outcome: 'completed' | 'stopped-short' | 'failed'
+  outcome: 'completed' | 'stopped-short' | 'partial' | 'blocked' | 'budget_exhausted' | 'cancelled' | 'failed'
   note: string
 }
 
@@ -116,6 +116,14 @@ function outcomeLine(ledger: RunLedger): string {
   switch (ledger.outcome) {
     case 'failed':
       return 'failed — the run ended without an answer'
+    case 'partial':
+      return `partial — ${ledger.openSteps.length} plan step(s) remain`
+    case 'blocked':
+      return 'blocked — a prerequisite or permission is missing'
+    case 'budget_exhausted':
+      return 'the run budget was exhausted'
+    case 'cancelled':
+      return 'cancelled by the user'
     case 'stopped-short':
       return `stopped short with ${ledger.openSteps.length} plan step(s) still open and no file written`
     default:
