@@ -42,7 +42,7 @@ npm run build:exe
 `node --version` should report `v24.x`. The installer is written to:
 
 ```text
-app/Loong-3.0.0-beta.1-Setup-x64.exe
+app/Loong-3.0.0-beta.2-Setup-x64.exe
 ```
 
 The version in the filename follows `package.json`. Run that installer, choose an installation folder, and launch **Loong** from the Start menu or desktop shortcut. You can also open `app/win-unpacked/Loong.exe` to check the unpacked build. Build on Windows for the Windows release; the Linux development environment does not establish Windows installer validation.

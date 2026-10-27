@@ -26,7 +26,7 @@ npm run build:exe
 ينبغي أن يعرض أمر Node إصدارًا يبدأ بـ`v24`. بعد نجاح البناء ستجد، للإصدار الحالي:
 
 ```text
-app\Loong-3.0.0-beta.1-Setup-x64.exe
+app\Loong-3.0.0-beta.2-Setup-x64.exe
 ```
 
 شغّل الملف، واختر مكان التثبيت، ثم افتح **Loong** من سطح المكتب أو قائمة Start. ويمكن اختبار النسخة غير المثبّتة من `app\win-unpacked\Loong.exe`. اسم ملف الـSetup يتبع رقم الإصدار في `package.json`.

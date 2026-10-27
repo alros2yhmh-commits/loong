@@ -64,3 +64,14 @@ PowerShell:
 $env:NODE_USE_ENV_PROXY = "1"
 npm run install:desktop
 ```
+
+## Development port already in use
+
+Do not terminate an unknown service. Choose a free agent port; Vite follows `LOONG_PORT` automatically. For example in PowerShell:
+
+```powershell
+$env:LOONG_PORT = "5276"
+npm run dev
+```
+
+The packaged desktop chooses its own private port and does not need this override.

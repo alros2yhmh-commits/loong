@@ -58,7 +58,7 @@ export default defineConfig({
     /* the packaged app loads over file:// and talks to the agent by absolute
        URL; in the dev browser a relative /api would hit Vite itself and report
        "agent offline" while the agent is right there on 5274 */
-    proxy: { '/api': { target: 'http://127.0.0.1:5274', changeOrigin: false } },
+    proxy: { '/api': { target: `http://127.0.0.1:${process.env.LOONG_PORT ?? 5274}`, changeOrigin: false } },
   },
   build: { outDir: 'dist', target: 'es2022' },
 })

@@ -4,7 +4,7 @@ A source commit, a successful CI artifact, and a published release are separate 
 
 ## Before tagging
 
-1. Update `package.json` and `package-lock.json` together. Use a prerelease version such as `3.0.0-beta.1` while validation or support commitments are incomplete.
+1. Update `package.json` and `package-lock.json` together. Use a prerelease version such as `3.0.0-beta.2` while validation or support commitments are incomplete.
 2. Run tests, evaluation harness self-check, build, bundle smoke, and real desktop smoke. Verify the Windows installer on Windows and the Linux package on Linux.
 3. Review model routing, permission changes, data migrations, native binaries, and dependency licenses. Never add a key, private project, local data directory, or signing certificate to Git.
 4. Record actual platform outcomes and known issues in the release notes. Live model scores require an identified model, dataset, budget, commit, and independent validators.
@@ -48,8 +48,8 @@ A Linux headless runner uses Xvfb for the real desktop smoke. Avoid disabling Ch
 Example, only after the release commit has passed:
 
 ```bash
-git tag -a v3.0.0-beta.1 -m "Loong 3.0.0 beta 1"
-git push origin v3.0.0-beta.1
+git tag -a v3.0.0-beta.2 -m "Loong 3.0.0 beta 2"
+git push origin v3.0.0-beta.2
 ```
 
 Do not move a published tag or replace its artifacts silently. Issue a new patch/prerelease for a corrected build.
@@ -59,7 +59,7 @@ Do not move a published tag or replace its artifacts silently. Issue a new patch
 Generate checksums with `npm run checksums`. Verify on Windows:
 
 ```powershell
-Get-FileHash .\Loong-3.0.0-beta.1-Setup-x64.exe -Algorithm SHA256
+Get-FileHash .\Loong-3.0.0-beta.2-Setup-x64.exe -Algorithm SHA256
 ```
 
 Compare the result against the same release's `SHA256SUMS.txt`. This detects a mismatched/corrupted download, but does not authenticate the publisher if both files came from an untrusted location.

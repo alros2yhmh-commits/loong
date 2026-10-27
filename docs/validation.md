@@ -1,11 +1,12 @@
-# Validation of 3.0.0-beta.1
+# Validation of 3.0.0-beta.2
 
 This file records executed checks separately from planned or externally blocked checks. Re-run them for the exact release commit; saved reports or earlier artifacts are not evidence for later changes.
 
 ## Checks executed during development
 
-- Linux Node24: full automated suite passed (400 tests, with zero failures and zero skipped tests).
+- Linux Node24: full automated suite passed (401 tests, with zero failures and zero skipped tests).
 - `npm audit --omit=dev` reported zero known production vulnerabilities after removing unused/vulnerable AG-UI client/protobuf dependencies. Recheck advisories for later releases; this is not a guarantee against unknown vulnerabilities.
+- Native `node server/start.ts` health/shutdown passed without tsx; this separately checks Node24 strip-only TypeScript compatibility.
 - Frontend and server TypeScript checks and production renderer/agent build passed.
 - Real local provider fixture: a background task wrote a real file, completed its independent project check, survived stream cancellation, and replayed without another model request or file write. This is a deterministic provider fixture, not a live model quality score.
 - Explicit cancellation resolved a parked approval without writing; broker UUIDs match.

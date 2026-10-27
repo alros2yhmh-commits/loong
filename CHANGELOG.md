@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.0-beta.2
+
+- Fix native Node24 development startup by avoiding non-erasable TypeScript parameter properties.
+- Add a real native entrypoint health/shutdown regression test, independent of tsx and the bundled desktop runtime.
+
 ## 3.0.0-beta.1
 
 - Agent results distinguish completed, partial, blocked, cancelled, failed, and budget-exhausted work. Project checks and bounded repairs run before completion.

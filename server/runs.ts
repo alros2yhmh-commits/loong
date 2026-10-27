@@ -34,7 +34,8 @@ export class RunStore {
   private records = new Map<string, RunRecord>()
   private eventCache = new Map<string, RunEvent[]>()
   private listeners = new Map<string, Set<() => void>>()
-  constructor(private directory: string) {}
+  private directory: string
+  constructor(directory: string) { this.directory = directory }
 
   private path(id: string, file: string): string {
     if (!safeId(id)) throw new Error('Invalid run ID.')
