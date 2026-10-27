@@ -108,6 +108,15 @@ test('a PreToolUse hook that exits 2 blocks the tool, with its reason', async ()
   assert.match(pre.reason ?? '', /blocked by policy/)
 })
 
+test('a hook that closes stdin still reports its exit status for a large payload', async () => {
+  writeHooks({ PreToolUse: [{ command: BLOCK_CMD }] })
+  /* Exceed the pipe buffer so a quick exit reliably exercises a pending write,
+     rather than relying on the scheduler to expose the original EPIPE race. */
+  const result = await runPreToolUse('write_file', { content: 'x'.repeat(256_000) })
+  assert.equal(result.allow, false)
+  assert.match(result.reason ?? '', /blocked by policy/)
+})
+
 test('a PreToolUse hook that passes adds its stdout as context', async () => {
   writeHooks({
     PreToolUse: [{ matcher: 'write', command: 'echo check the licence header' }],

@@ -35,3 +35,9 @@ test('run without a command is refused, not guessed', async () => {
   const out = await terminal.execute!({ action: 'run' }, {} as never)
   assert.match(String(out), /needs a command/i)
 })
+
+
+test('terminal refuses commands naming protected paths before starting a process', async () => {
+  const out = await terminal.execute!({ action: 'run', command: 'cat .ssh/id_rsa' }, {} as never)
+  assert.match(String(out), /Refused:.*protected/)
+})

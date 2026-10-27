@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
 import { mkdir, readFile, readdir, rm, rename, stat, writeFile } from 'node:fs/promises'
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { uptime } from 'node:os'
 import type { Dirent } from 'node:fs'
 import { lookup } from 'node:dns/promises'
@@ -33,6 +33,7 @@ import {
 import { requestApproval, requestQuestion } from './approvals.ts'
 import { browserAction, shotsDir } from './browser.ts'
 import { recordWrite } from './journal.ts'
+import { screenCommand } from './command-guard.ts'
 import { forget, recall, remember } from './memory.ts'
 import { gitCommitTool, gitDiffTool, gitLogTool, gitStatusTool } from './git.ts'
 import { applyEdits, findMatch } from './edits.ts'
@@ -47,9 +48,43 @@ import { listServers, serverLogs, startServer, stopServer } from './servers.ts'
 function snapshot(abs: string): Buffer | null {
   try {
     return readFileSync(abs)
-  } catch {
-    return null
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
   }
+}
+
+interface SavedPath {
+  path: string
+  before: Buffer | null
+  directory: boolean
+}
+
+/** Capture a whole tree BEFORE deleting or moving anything. Refuse paths we
+ *  cannot restore, rather than silently treating unreadable bytes as new files. */
+function snapshotTree(root: string): SavedPath[] {
+  const saved: SavedPath[] = []
+  let bytes = 0
+  const walk = (path: string): void => {
+    resolveInside(path)
+    const info = lstatSync(path)
+    if (info.isSymbolicLink() || (!info.isDirectory() && !info.isFile())) {
+      throw new Error('Refused: this operation contains a symbolic link or special file that cannot be safely rewound.')
+    }
+    if (saved.length >= 20_000 || bytes + info.size > 64 * 1024 * 1024) {
+      throw new Error('Refused: this operation exceeds the reversible snapshot limit (20,000 paths or 64 MiB). Nothing was changed.')
+    }
+    if (info.isDirectory()) {
+      saved.push({ path, before: null, directory: true })
+      for (const name of readdirSync(path)) walk(join(path, name))
+    } else {
+      const before = readFileSync(path)
+      bytes += before.length
+      saved.push({ path, before, directory: false })
+    }
+  }
+  walk(root)
+  return saved
 }
 
 const run = promisify(exec)
@@ -313,10 +348,7 @@ export const writeFileTool = tool({
   execute: async ({ path, content }) => {
     const abs = resolveInside(path)
     await mkdir(dirname(abs), { recursive: true })
-    let previous: Buffer | null = null
-    try {
-      previous = await readFile(abs)
-    } catch {}
+    const previous = snapshot(abs)
     await writeFile(abs, content, 'utf8')
     /* the before-state is what makes an undo possible — stored binary-safe */
     recordWrite('write', abs, previous)
@@ -408,6 +440,10 @@ export const mkdirTool = tool({
   }),
   execute: async ({ path }) => {
     const abs = resolveInside(path)
+    if (existsSync(abs)) {
+      if (!(await stat(abs)).isDirectory()) throw new Error('Refused: that path already exists and is not a directory.')
+      return `Directory ${displayPath(abs)} already exists; nothing changed.`
+    }
     await mkdir(abs, { recursive: true })
     recordWrite('mkdir', abs, null)
     return `Created directory ${displayPath(abs)}.`
@@ -421,9 +457,15 @@ export const deleteFileTool = tool({
   }),
   execute: async ({ path }) => {
     const abs = resolveInside(path)
+    if (abs === resolve(getWorkspace())) throw new Error('Refused: the open workspace root cannot be deleted.')
+    if (!existsSync(abs)) return `Path ${displayPath(abs)} does not exist; nothing changed.`
+    const saved = snapshotTree(abs)
     await rm(abs, { recursive: true, force: true })
-    recordWrite('delete', abs, snapshot(abs))
-    return `Deleted ${displayPath(abs)}.`
+    /* Reverse recording restores parent directories before their contents. */
+    for (const entry of [...saved].reverse()) {
+      recordWrite('delete', entry.path, entry.before, { beforeDirectory: entry.directory })
+    }
+    return `Deleted ${displayPath(abs)}. ${saved.length} path(s) saved for rewind.`
   },
 })
 
@@ -436,13 +478,23 @@ export const moveFileTool = tool({
   execute: async ({ from, to }) => {
     const absFrom = resolveInside(from)
     const absTo = resolveInside(to)
+    if (absFrom === resolve(getWorkspace())) throw new Error('Refused: the open workspace root cannot be moved.')
+    if (absFrom === absTo) return 'Source and destination are the same; nothing changed.'
+    const saved = snapshotTree(absFrom)
+    const destination = existsSync(absTo) ? snapshotTree(absTo) : []
+    const oldDestination = new Map(destination.map((entry) => [entry.path, entry]))
     await mkdir(dirname(absTo), { recursive: true })
-    const before = snapshot(absFrom)
     await rename(absFrom, absTo)
-    /* two entries, because a move is a delete plus a create — and a rewind
-       runs backwards, putting each half back in the right order */
-    recordWrite('move', absFrom, before)
-    recordWrite('move', absTo, null)
+    for (const entry of [...saved].reverse()) {
+      recordWrite('move', entry.path, entry.before, { beforeDirectory: entry.directory })
+    }
+    for (const entry of saved) {
+      const target = resolve(absTo, relative(absFrom, entry.path))
+      const previous = oldDestination.get(target)
+      recordWrite(entry.directory && !previous ? 'mkdir' : 'move', target, previous?.before ?? null, {
+        beforeDirectory: previous?.directory,
+      })
+    }
     return `Moved ${displayPath(absFrom)} to ${displayPath(absTo)}.`
   },
 })
@@ -456,6 +508,8 @@ export const shellTool = tool({
   }),
   execute: async ({ command, cwd }) => {
     const dir = resolveInside(cwd ?? '.')
+    const verdict = screenCommand(command, dir)
+    if (!verdict.ok) return `Refused: ${verdict.reason}`
     try {
       const { stdout, stderr } = await run(command, {
         cwd: dir,
@@ -467,18 +521,18 @@ export const shellTool = tool({
       const out = [stdout, stderr].filter(Boolean).join('\n').trim()
       /* where it actually ran, echoed back — a model that assumes the cwd
          is what produces the same `cd x && echo test` command fifteen times */
-      return `${clip(out || '(the command produced no output)')}\n[cwd: ${displayPath(dir)}]`
+      return `${clip(out || '(the command produced no output)')}\n[exit code: 0]\n[cwd: ${displayPath(dir)}]`
     } catch (err) {
-      const e = err as Error & { killed?: boolean; stdout?: string; stderr?: string }
+      const e = err as Error & { killed?: boolean; code?: number | string; stdout?: string; stderr?: string }
       if (e.killed) {
-        return `The command was killed after ${SHELL_TIMEOUT_MS / 1e3}s.\n${clip(e.stdout ?? '')}\n[cwd: ${displayPath(dir)}]`
+        return `Command timed out after ${SHELL_TIMEOUT_MS / 1e3}s. For a longer task use terminal run, then read to poll its output or kill to cancel.\n${clip(e.stdout ?? '')}\n[cwd: ${displayPath(dir)}]`
       }
       const out = [e.stdout, e.stderr].filter(Boolean).join('\n').trim()
       const looksBash = process.platform === 'win32' && /pwd|ls -|ls\b|\$[A-Za-z_]|\/dev\/null|~\/|export [A-Za-z_]+=/.test(command)
       const hint = looksBash
         ? `\n[hint: this shell is cmd.exe on Windows — pwd, ls, $VAR, ~/, export and /dev/null are bash-isms. Use dir, cd /d, %VAR%, or chain commands with &&.]`
         : ''
-      return clip(`Command failed.\n${out || e.message}${hint}`) + `\n[cwd: ${displayPath(dir)}]`
+      return clip(`Command failed (exit code: ${e.code ?? 'unknown'}).\n${out || e.message}${hint}`) + `\n[cwd: ${displayPath(dir)}]`
     }
   },
 })

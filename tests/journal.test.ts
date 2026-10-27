@@ -1,6 +1,6 @@
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -148,4 +148,158 @@ test('binary content is restored byte-for-byte on rewind', () => {
   } finally {
     rmSync(ws, { recursive: true, force: true })
   }
+})
+
+
+async function inWorkspace(name: string, fn: (workspace: string) => void | Promise<void>): Promise<void> {
+  const workspace = mkdtempSync(join(tmpdir(), 'loong-journal-operation-'))
+  setWorkspace(workspace)
+  setCurrentRun(name)
+  try { await fn(workspace) } finally {
+    setCurrentRun(null)
+    rmSync(workspace, { recursive: true, force: true })
+  }
+}
+
+test('real deletion saves binary and empty bytes before removing the files', async () => {
+  const { deleteFileTool } = await import('../server/tools.ts')
+  await inWorkspace('delete-bytes', async (ws) => {
+    const binary = Buffer.from([0, 255, 128, 1, 10])
+    writeFileSync(join(ws, 'binary.dat'), binary)
+    writeFileSync(join(ws, 'empty.dat'), Buffer.alloc(0))
+    await deleteFileTool.execute!({ path: 'binary.dat' }, {} as never)
+    await deleteFileTool.execute!({ path: 'empty.dat' }, {} as never)
+    assert.equal(existsSync(join(ws, 'binary.dat')), false)
+    const result = rewindRun('delete-bytes')!
+    assert.deepEqual(result.conflicts, [])
+    assert.deepEqual(result.failed, [])
+    assert.deepEqual(readFileSync(join(ws, 'binary.dat')), binary)
+    assert.equal(readFileSync(join(ws, 'empty.dat')).length, 0)
+  })
+})
+
+test('deleting a directory can restore nested files and empty directories', async () => {
+  const { deleteFileTool } = await import('../server/tools.ts')
+  await inWorkspace('delete-tree', async (ws) => {
+    mkdirSync(join(ws, 'tree', 'empty'), { recursive: true })
+    mkdirSync(join(ws, 'tree', 'nested'))
+    writeFileSync(join(ws, 'tree', 'nested', 'a.txt'), 'important original')
+    await deleteFileTool.execute!({ path: 'tree' }, {} as never)
+    assert.equal(existsSync(join(ws, 'tree')), false)
+    const result = rewindRun('delete-tree')!
+    assert.deepEqual(result.failed, [])
+    assert.deepEqual(result.conflicts, [])
+    assert.equal(readFileSync(join(ws, 'tree', 'nested', 'a.txt'), 'utf8'), 'important original')
+    assert.equal(existsSync(join(ws, 'tree', 'empty')), true)
+  })
+})
+
+test('rewind preserves edits made by the user after a run', async () => {
+  const { writeFileTool } = await import('../server/tools.ts')
+  await inWorkspace('later-user-edit', async (ws) => {
+    const file = join(ws, 'a.txt')
+    writeFileSync(file, 'original')
+    await writeFileTool.execute!({ path: 'a.txt', content: 'agent version' }, {} as never)
+    writeFileSync(file, 'user work after agent')
+    const result = rewindRun('later-user-edit')!
+    assert.equal(result.conflicts.length, 1)
+    assert.deepEqual(result.restored, [])
+    assert.equal(readFileSync(file, 'utf8'), 'user work after agent')
+  })
+})
+
+test('rewind reverses several writes to one file without false conflicts', async () => {
+  const { writeFileTool } = await import('../server/tools.ts')
+  await inWorkspace('several-writes', async (ws) => {
+    const file = join(ws, 'a.txt')
+    writeFileSync(file, 'original')
+    await writeFileTool.execute!({ path: 'a.txt', content: 'first edit' }, {} as never)
+    await writeFileTool.execute!({ path: 'a.txt', content: 'second edit' }, {} as never)
+    const result = rewindRun('several-writes')!
+    assert.deepEqual(result.conflicts, [])
+    assert.deepEqual(result.failed, [])
+    assert.equal(readFileSync(file, 'utf8'), 'original')
+  })
+})
+
+test('a created directory holding a later user file is never recursively removed', async () => {
+  const { mkdirTool } = await import('../server/tools.ts')
+  await inWorkspace('later-directory-file', async (ws) => {
+    await mkdirTool.execute!({ path: 'new-dir' }, {} as never)
+    writeFileSync(join(ws, 'new-dir', 'user.txt'), 'preserve this')
+    const result = rewindRun('later-directory-file')!
+    assert.equal(result.conflicts.length, 1)
+    assert.equal(readFileSync(join(ws, 'new-dir', 'user.txt'), 'utf8'), 'preserve this')
+  })
+})
+
+test('moving over a file restores both source and overwritten destination on rewind', async () => {
+  const { moveFileTool } = await import('../server/tools.ts')
+  await inWorkspace('move-replacement', async (ws) => {
+    writeFileSync(join(ws, 'source.txt'), 'source original')
+    writeFileSync(join(ws, 'destination.txt'), 'destination original')
+    await moveFileTool.execute!({ from: 'source.txt', to: 'destination.txt' }, {} as never)
+    assert.equal(readFileSync(join(ws, 'destination.txt'), 'utf8'), 'source original')
+    const result = rewindRun('move-replacement')!
+    assert.deepEqual(result.failed, [])
+    assert.deepEqual(result.conflicts, [])
+    assert.equal(readFileSync(join(ws, 'source.txt'), 'utf8'), 'source original')
+    assert.equal(readFileSync(join(ws, 'destination.txt'), 'utf8'), 'destination original')
+  })
+})
+
+test('workspace root deletion and moving are refused before any change', async () => {
+  const { deleteFileTool, moveFileTool } = await import('../server/tools.ts')
+  await inWorkspace('protect-root', async (ws) => {
+    writeFileSync(join(ws, 'a.txt'), 'still here')
+    await assert.rejects(async () => deleteFileTool.execute!({ path: '.' }, {} as never), /workspace root/)
+    await assert.rejects(async () => moveFileTool.execute!({ from: '.', to: 'nested' }, {} as never), /workspace root/)
+    assert.equal(readFileSync(join(ws, 'a.txt'), 'utf8'), 'still here')
+  })
+})
+
+test('a symlink replacing the run file is preserved instead of following it on rewind', { skip: process.platform === 'win32' }, async () => {
+  const { writeFileTool } = await import('../server/tools.ts')
+  await inWorkspace('symlink-replacement', async (ws) => {
+    const file = join(ws, 'a.txt')
+    await writeFileTool.execute!({ path: 'a.txt', content: 'agent version' }, {} as never)
+    writeFileSync(join(ws, 'other.txt'), 'agent version')
+    rmSync(file)
+    symlinkSync(join(ws, 'other.txt'), file)
+    const result = rewindRun('symlink-replacement')!
+    assert.equal(result.conflicts.length, 1)
+    assert.equal(readFileSync(join(ws, 'other.txt'), 'utf8'), 'agent version')
+    assert.equal(readFileSync(file, 'utf8'), 'agent version')
+  })
+})
+
+
+test('rewind refuses an ancestor redirected to another file with identical contents', { skip: process.platform === 'win32' }, async () => {
+  const { writeFileTool } = await import('../server/tools.ts')
+  await inWorkspace('symlink-ancestor', async (ws) => {
+    mkdirSync(join(ws, 'folder'))
+    await writeFileTool.execute!({ path: 'folder/a.txt', content: 'agent version' }, {} as never)
+    renameSync(join(ws, 'folder'), join(ws, 'original-folder'))
+    mkdirSync(join(ws, 'user-folder'))
+    writeFileSync(join(ws, 'user-folder', 'a.txt'), 'agent version')
+    symlinkSync(join(ws, 'user-folder'), join(ws, 'folder'), 'dir')
+    const result = rewindRun('symlink-ancestor')!
+    assert.equal(result.conflicts.length, 1)
+    assert.equal(readFileSync(join(ws, 'user-folder', 'a.txt'), 'utf8'), 'agent version')
+    assert.equal(existsSync(join(ws, 'original-folder', 'a.txt')), true)
+  })
+})
+
+
+test('write_file refuses to overwrite bytes it cannot snapshot', { skip: process.platform === 'win32' || process.getuid?.() === 0 }, async () => {
+  const { writeFileTool } = await import('../server/tools.ts')
+  await inWorkspace('unreadable-before-state', async (ws) => {
+    const file = join(ws, 'write-only.txt')
+    writeFileSync(file, 'must survive')
+    chmodSync(file, 0o200)
+    try {
+      await assert.rejects(async () => writeFileTool.execute!({ path: 'write-only.txt', content: 'replacement' }, {} as never), /EACCES|permission/i)
+    } finally { chmodSync(file, 0o600) }
+    assert.equal(readFileSync(file, 'utf8'), 'must survive')
+  })
 })

@@ -274,7 +274,7 @@ function runHook(
   payload: unknown,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    exec(
+    const child = exec(
       spec.command,
       {
         cwd: getWorkspace(),
@@ -288,7 +288,12 @@ function runHook(
         const code = err && 'code' in err ? Number((err as { code?: number }).code ?? 1) : 0
         resolve({ code, stdout: stdout ?? '', stderr: stderr ?? '' })
       },
-    ).stdin?.end(JSON.stringify(payload))
+    )
+    /* A fast hook may exit without reading stdin. That is a valid hook, not
+       an uncaught EPIPE that should bring down the agent process. The exec
+       callback remains authoritative for its exit status and output. */
+    child.stdin?.on('error', () => {})
+    child.stdin?.end(JSON.stringify(payload))
   })
 }
 

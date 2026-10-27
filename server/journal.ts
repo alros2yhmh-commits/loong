@@ -1,5 +1,6 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, rmdirSync, lstatSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
+import { createHash } from 'node:crypto'
 import { DATA_DIR, resolveInside } from './config.ts'
 import { currentRunId } from './run-context.ts'
 
@@ -31,6 +32,35 @@ interface JournalEntry {
   /** when true, beforeB64 holds the previous bytes as base64 (binary-safe) */
   binary?: boolean
   beforeB64?: string | null
+  /** the state the tool left behind; undo must not overwrite later user edits */
+  afterFingerprint?: string
+  afterCanonical?: string
+  beforeDirectory?: boolean
+}
+
+function canonicalLocation(path: string): string {
+  let ancestor = path
+  const suffix: string[] = []
+  for (;;) {
+    try { return join(realpathSync(ancestor), ...suffix.reverse()) } catch {
+      const parent = dirname(ancestor)
+      if (parent === ancestor) return path
+      suffix.push(basename(ancestor))
+      ancestor = parent
+    }
+  }
+}
+
+function fingerprint(path: string): string {
+  try {
+    const stat = lstatSync(path)
+    if (stat.isSymbolicLink()) return 'unsupported'
+    if (stat.isDirectory()) return 'directory'
+    if (stat.isFile()) return `file:${createHash('sha256').update(readFileSync(path)).digest('hex')}`
+    return 'unsupported'
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unreadable'
+  }
 }
 
 function dir(): string {
@@ -51,6 +81,7 @@ export function recordWrite(
    *  previous bytes were binary — they are stored base64 so a rewind restores
    *  them byte-for-byte instead of mangling them through a UTF-8 round-trip. */
   before: string | Buffer | null,
+  options: { beforeDirectory?: boolean } = {},
 ): void {
   const runId = currentRunId()
   if (!runId) return
@@ -63,6 +94,9 @@ export function recordWrite(
     before: typeof before === 'string' ? before : null,
     binary: isBinary,
     beforeB64: isBinary && before ? (before as Buffer).toString('base64') : null,
+    afterFingerprint: fingerprint(path),
+    afterCanonical: canonicalLocation(path),
+    ...(options.beforeDirectory ? { beforeDirectory: true } : {}),
   }
   try {
     appendFileSync(journalFile(), `${JSON.stringify(entry)}\n`, 'utf8')
@@ -116,6 +150,8 @@ export interface RewindResult {
   runId: string
   restored: string[]
   removed: string[]
+  conflicts: { path: string; reason: string }[]
+  failed: string[]
 }
 
 /** undo one run: its entries, last write first, each file put back as it was */
@@ -125,38 +161,77 @@ export function rewindRun(runId: string): RewindResult | null {
   const restored: string[] = []
   const removed: string[] = []
   const failed: string[] = []
+  const conflicts: RewindResult['conflicts'] = []
+  const blocked = new Set<string>()
+  /* Compare with the LAST state from this run before changing anything. A
+     rewind of an older run must not overwrite a later run or a user's edits.
+     Old journals did not store the after-state, so preserve them for manual
+     recovery rather than guessing that their current content is still ours. */
+  const lastByPath = new Map(entries.map((entry) => [entry.path, entry]))
+  for (const [path, entry] of lastByPath) {
+    let reason: string | null = null
+    try {
+      const abs = resolveInside(path)
+      if (!entry.afterFingerprint) reason = 'This older checkpoint has no after-state; restore it manually to preserve later changes.'
+      else if (['unreadable', 'unsupported'].includes(entry.afterFingerprint)) reason = 'The checkpoint could not capture a restorable after-state.'
+      else if (entry.afterCanonical && canonicalLocation(abs) !== entry.afterCanonical) reason = 'The path now points to a different location; your current content was preserved.'
+      else if (fingerprint(abs) !== entry.afterFingerprint) reason = 'The path changed after this run; your current content was preserved.'
+    } catch {
+      reason = 'The path is no longer accessible inside the current workspace.'
+    }
+    if (reason) {
+      blocked.add(path)
+      conflicts.push({ path, reason })
+    }
+  }
   for (const e of [...entries].reverse()) {
+    if (blocked.has(e.path)) continue
     try {
       /* re-validate the path against the workspace on the way back out. The
          journal records what changed, not where it may be restored; a path that
          no longer resolves inside the workspace is never written. */
       const abs = resolveInside(e.path)
+      if ((e.afterCanonical && canonicalLocation(abs) !== e.afterCanonical) || fingerprint(abs) !== e.afterFingerprint) {
+        blocked.add(e.path)
+        conflicts.push({ path: e.path, reason: 'The path changed during rewind and was preserved.' })
+        continue
+      }
       /* "remove" only when the run CREATED the path: a mkdir, or a write whose
          before was null. A binary write also stores before=null (its bytes live
          in beforeB64), so it is flagged binary — that is an existing file to
          restore, never one to delete. */
-      const created = e.op === 'mkdir' || (e.before === null && !e.binary)
+      const created = !e.beforeDirectory && (e.op === 'mkdir' || (e.before === null && !e.binary))
       if (created) {
-        if (existsSync(abs)) rmSync(abs, { recursive: true, force: true })
+        if (existsSync(abs)) {
+          /* Never recursively remove a directory on rewind: it might now hold
+             an unrelated file the user created after the run. */
+          if (statSync(abs).isDirectory()) rmdirSync(abs)
+          else rmSync(abs, { force: true })
+        }
         removed.push(abs)
+      } else if (e.beforeDirectory) {
+        mkdirSync(abs, { recursive: true })
+        restored.push(abs)
       } else {
         const data: string | Buffer =
-          e.binary && e.beforeB64 ? Buffer.from(e.beforeB64, 'base64') : (e.before as string)
+          e.binary && typeof e.beforeB64 === 'string' ? Buffer.from(e.beforeB64, 'base64') : (e.before as string)
+        mkdirSync(dirname(abs), { recursive: true })
         if (typeof data === 'string') writeFileSync(abs, data, 'utf8')
         else writeFileSync(abs, data)
         restored.push(abs)
       }
     } catch (err) {
+      blocked.add(e.path)
+      if (['ENOTEMPTY', 'EEXIST'].includes((err as NodeJS.ErrnoException).code ?? '')) {
+        conflicts.push({ path: e.path, reason: 'The directory contains later files and was preserved.' })
+        continue
+      }
       /* never swallow a failed restore — the rest of the rewind still runs, but
          the failure is logged and reported so the user knows the undo is partial */
       failed.push(e.path)
-      console.error(`[rewind] could not restore ${e.path}:`, err)
     }
   }
-  if (failed.length) {
-    console.error(`[rewind] ${failed.length} file(s) not restored:`, failed)
-  }
-  return { runId, restored, removed }
+  return { runId, restored, removed, conflicts, failed }
 }
 
 /** the unique paths a run changed — the security gate scans exactly these */

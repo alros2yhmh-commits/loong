@@ -85,6 +85,19 @@ test('overlapping edits in one batch are refused', () => {
   assert.match(out.error, /overlap/)
 })
 
+test('batch edits use file offsets regardless of the order supplied', () => {
+  const edits = [
+    { oldText: 'BBB', newText: 'BBBBBBBB' },
+    { oldText: 'DDD', newText: 'D' },
+    { oldText: 'FFF', newText: '' },
+  ]
+  for (const order of [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]]) {
+    const result = applyEdits('aaa BBB ccc DDD eee FFF end', order.map((i) => edits[i]))
+    assert.equal(result.ok, true)
+    if (result.ok) assert.equal(result.content, 'aaa BBBBBBBB ccc D eee  end', `order ${order}`)
+  }
+})
+
 test('a file that already ends without newline keeps that', () => {
   const raw = 'a\nb'
   const out = applyEdits(raw, [{ oldText: 'b', newText: 'B' }])

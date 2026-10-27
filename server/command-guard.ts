@@ -1,5 +1,6 @@
 import { homedir } from 'node:os'
-import { isAbsolute, relative, resolve } from 'node:path'
+import { isAbsolute, relative, resolve, dirname } from 'node:path'
+import { accessSync, constants } from 'node:fs'
 import { getWorkspace } from './config.ts'
 
 /* ---------------------------------------------------------------------------
@@ -29,12 +30,30 @@ const WIN_ABS = /(?<![A-Za-z0-9+.-])([A-Za-z]:[\\/][^\s"')|&;<>]*)/g
    `x:`, which refused ordinary prose. */
 const WIN_DRIVE_SWITCH = /(?:^|&&|\|\||[&|;(\n]|\bcd\s+(?:\/d\s+)?)([A-Za-z]:)(?=$|[\s&|;)\n])/gi
 const UNC = /(\\\\[^\s"')|&;<>]+)/g
-const POSIX_ABS = /(?:^|[\s"'=(,])(\/[^\s"')|&;<>]+)/g
+const POSIX_ABS = /(?:^|[\s"'=(,<>])(\/[^\s"')|&;<>]+)/g
 const HOME_REFS = /(%~?USERPROFILE%|%HOMEPATH%|%HOMEDRIVE%|%APPDATA%|%LOCALAPPDATA%|\$HOME|~[\\/])/i
 /* Protected names are refused wherever they appear. `AppData` is not on this
    list: a workspace can legitimately live under it, and an absolute path there
    is already judged by the boundary check. The env-var spellings of it are. */
 const SENSITIVE = /(\.agent-collab|\.ssh|\.aws|\.gnupg|\.password-store|\.kube|\.loong\b)/i
+
+const SYSTEM_BIN_DIRS = new Set(['/bin', '/usr/bin', '/usr/local/bin', '/sbin', '/usr/sbin', '/usr/local/sbin'])
+
+/** An absolute spelling of a system executable is equivalent to its PATH
+ *  spelling, but a data argument naming that same path still crosses the jail.
+ *  This is command screening, not an attempt to sandbox an interpreter. */
+function isSystemCommand(path: string, prefix: string): boolean {
+  if (!SYSTEM_BIN_DIRS.has(dirname(resolve(path)))) return false
+  const before = prefix.replace(/["']$/, '')
+  const segment = before.split(/&&|\|\||[|;\n]/).at(-1) ?? ''
+  if (!/^\s*(?:(?:command|exec|env)\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=[^\s]+\s+)*$/.test(segment)) return false
+  try {
+    accessSync(path, constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
 
 /** a path stays inside when it is the root or sits under it — canonically-ish */
 function inside(root: string, p: string): boolean {
@@ -81,6 +100,11 @@ export function screenCommand(command: string, root = getWorkspace()): CommandVe
     re.lastIndex = 0
     let m: RegExpExecArray | null
     while ((m = re.exec(text)) !== null) {
+      if (process.platform !== 'win32') {
+        if (m[1] === '/dev/null') continue
+        const pathStart = m.index + m[0].indexOf(m[1])
+        if (isSystemCommand(m[1], text.slice(0, pathStart))) continue
+      }
       const verdict = check(m[1])
       if (verdict) return verdict
     }

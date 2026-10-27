@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { spawn, type IPty } from 'node-pty'
 import { getWorkspace } from './config.ts'
 import { requestApproval } from './approvals.ts'
+import { screenCommand } from './command-guard.ts'
 
 /* ---------------------------------------------------------------------------
    A real terminal, not a command runner.
@@ -177,6 +178,8 @@ export function createTerminalTool(runId: string, autoApprove = false) {
       if (action === 'run') {
         const line = command?.trim()
         if (!line) return 'run needs a command.'
+        const verdict = screenCommand(line)
+        if (!verdict.ok) return `Refused: ${verdict.reason}`
         const ok = await approve(runId, 'run', `Run in the live shell:\n\n${line}`, autoApprove)
         if (!ok) {
           return 'The user denied running that command. Do not retry it and do not look for another way to do the same thing.'

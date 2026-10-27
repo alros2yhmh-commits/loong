@@ -190,7 +190,8 @@ export function applyEdits(raw: string, edits: EditOp[]): ApplyResult {
   /* apply back-to-front so earlier ranges stay valid */
   let content = raw
   const notes: string[] = []
-  for (const m of [...matched].reverse()) {
+  for (const range of [...ranges].reverse()) {
+    const m = matched[range.index]
     const one = m.match as { start: number; end: number; note?: string }
     content = content.slice(0, one.start) + m.edit.newText + content.slice(one.end)
     if (one.note) notes.push(`edit ${m.index + 1}: ${one.note}`)
