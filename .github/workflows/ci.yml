@@ -1,0 +1,79 @@
+name: Build and test
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  validate:
+    name: Test and package (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run eval:check
+      - run: npm run build
+      - run: npm run smoke:bundle
+      - run: npm run smoke:runtime
+      - name: Renderer acceptance (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          if command -v google-chrome >/dev/null; then
+            LOONG_BROWSER="$(command -v google-chrome)" npm run smoke:ui
+          else
+            npx playwright-core install chromium
+            npm run smoke:ui
+          fi
+      - name: Desktop smoke (Linux)
+        if: runner.os == 'Linux'
+        # Container/runner test only. Normal desktop launches keep the sandbox on.
+        run: xvfb-run -a npm run smoke:desktop
+        env:
+          LOONG_DISABLE_SANDBOX: '1'
+      - name: Desktop smoke (Windows)
+        if: runner.os == 'Windows'
+        run: npm run smoke:desktop
+      - name: Windows installer
+        if: runner.os == 'Windows'
+        run: npm run build:exe
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Linux AppImage
+        if: runner.os == 'Linux'
+        run: npm run build:linux
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Verify packaged desktop (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node scripts/smoke-desktop.mjs --packaged app/linux-unpacked/loong
+        env:
+          LOONG_DISABLE_SANDBOX: '1'
+      - name: Verify packaged desktop (Windows)
+        if: runner.os == 'Windows'
+        run: node scripts/smoke-desktop.mjs --packaged app/win-unpacked/Loong.exe
+      - run: npm run checksums
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: loong-${{ runner.os }}
+          path: |
+            app/*.exe
+            app/*.AppImage
+            app/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14

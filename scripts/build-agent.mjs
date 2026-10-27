@@ -21,7 +21,9 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
+  chmodSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -52,14 +54,34 @@ const telemetryStub = {
   },
 }
 
+/* playwright's distribution resolves package metadata from lib/.. at runtime.
+   Once coreBundle.js is embedded, __dirname is the sidecar directory instead.
+   Keep its package root beside the verified metadata copied below; do not write
+   generated metadata over the checkout's own package.json. Fail on an upstream
+   layout change so a dependency update cannot silently break the desktop. */
+const playwrightPackageRoot = {
+  name: 'playwright-sidecar-package-root',
+  setup(pluginBuild) {
+    pluginBuild.onLoad({ filter: /[\\/]playwright-core[\\/]lib[\\/]coreBundle\.js$/ }, async ({ path }) => {
+      const source = readFileSync(path, 'utf8')
+      const assignment = /packageRoot = \w+\.default\.join\(__dirname, ["']\.\.["']\);/g
+      const matches = source.match(assignment) ?? []
+      if (matches.length !== 1) throw new Error('Playwright package-root layout changed; review sidecar packaging')
+      return { contents: source.replace(assignment, 'packageRoot = __dirname;'), loader: 'js' }
+    })
+  },
+}
+
 await build({
   entryPoints: [join(root, 'server', 'start.ts')],
   bundle: true,
   platform: 'node',
   format: 'cjs',
+  // The pinned Electron 44 runtime and development both use supported Node 24.
+  target: 'node24',
   outfile: join(root, 'dist-agent', 'loong-agent.cjs'),
   external: ['node-pty', 'better-sqlite3', 'node:*'],
-  plugins: [bidiStub, telemetryStub],
+  plugins: [bidiStub, telemetryStub, playwrightPackageRoot],
   logLevel: 'info',
 })
 
@@ -68,9 +90,8 @@ console.log('[loong] agent bundle written to dist-agent/loong-agent.cjs')
 /* playwright-core locates two files with paths it builds at runtime
    (`join(packageRoot, 'browsers.json')` and `…'package.json'`, where
    packageRoot = __dirname/..). No bundler can resolve a computed path, so
-   both files are written next to the bundle: electron-builder then places one
-   copy in resources/agent/ (it ships dist-agent whole) and one in resources/
-   via extraResources — the two spots the runtime path can land. */
+   both files are written next to the bundle, and the package-root adapter above
+   keeps their lookup there in development and in resources/agent/ after packaging. */
 const pwBrowsers = join(root, 'node_modules', 'playwright-core', 'browsers.json')
 if (existsSync(pwBrowsers)) {
   copyFileSync(pwBrowsers, join(root, 'dist-agent', 'browsers.json'))
@@ -80,7 +101,7 @@ if (existsSync(pwBrowsers)) {
 }
 writeFileSync(
   join(root, 'dist-agent', 'package.json'),
-  JSON.stringify({ name: 'playwright-core', version: '1.0.0-loong', private: true }, null, 2),
+  JSON.stringify({ name: 'playwright-core', version: JSON.parse(readFileSync(join(root, 'node_modules', 'playwright-core', 'package.json'), 'utf8')).version, private: true }, null, 2),
   'utf8',
 )
 console.log('[loong] playwright identity file copied to dist-agent/')
@@ -137,6 +158,7 @@ if (existsSync(ptySrc)) {
   }
   mkdirSync(join(ptyDest, 'prebuilds'), { recursive: true })
   copyFileSync(join(ptySrc, 'package.json'), join(ptyDest, 'package.json'))
+  if (existsSync(join(ptySrc, 'LICENSE'))) copyFileSync(join(ptySrc, 'LICENSE'), join(ptyDest, 'LICENSE'))
   await copyTree(join(ptySrc, 'lib'), join(ptyDest, 'lib'))
   const platformDir = `${process.platform}-${process.arch}`
   const prebuild = join(ptySrc, 'prebuilds', platformDir)
@@ -145,9 +167,39 @@ if (existsSync(ptySrc)) {
       filter: (src) => !src.endsWith('.pdb'),
     })
     console.log(`[loong] node-pty runtime copied (${platformDir})`)
-  } else {
-    console.warn(`[loong] node-pty has no prebuild for ${platformDir}`)
+  }
+  // npm may compile the Node-API addon locally instead of supplying a prebuild.
+  // Its runtime loader checks build/Release first; keep native siblings too.
+  const localRelease = join(ptySrc, 'build', 'Release')
+  if (existsSync(localRelease)) {
+    await copyTree(localRelease, join(ptyDest, 'build', 'Release'), {
+      filter: (src) => !src.endsWith('.pdb') && !src.endsWith('.obj') && !src.endsWith('.o'),
+    })
+    const spawnHelper = join(ptyDest, 'build', 'Release', 'spawn-helper')
+    if (existsSync(spawnHelper) && process.platform !== 'win32') chmodSync(spawnHelper, 0o755)
+    console.log('[loong] locally compiled node-pty runtime copied')
+  }
+  if (!existsSync(localRelease) && !existsSync(prebuild)) {
+    throw new Error(`node-pty has no runtime for ${platformDir}; reinstall with native build prerequisites`)
   }
 } else {
-  console.warn('[loong] node-pty not installed — the terminal tool will report it')
+  throw new Error('node-pty is required; run npm ci before building')
 }
+
+/* Retain installed production dependency notices beside the distributed agent. */
+const lockfile = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'))
+const notices = ['Loong bundled dependency notices', 'Generated from the installed, lockfile-resolved production dependencies.', 'Electron/Chromium notices are also distributed by electron-builder.', '']
+for (const [relative, entry] of Object.entries(lockfile.packages ?? {})) {
+  if (!relative || entry.dev) continue
+  const directory = join(root, relative)
+  const packageFile = join(directory, 'package.json')
+  if (!existsSync(packageFile)) continue
+  const pkg = JSON.parse(readFileSync(packageFile, 'utf8'))
+  notices.push(`\n=== ${pkg.name ?? relative}@${pkg.version ?? entry.version} ===`, `License: ${pkg.license ?? entry.license ?? 'See package distribution'}`)
+  for (const name of readdirSync(directory)) {
+    if (!/^(?:licen[cs]e|copying|notice)(?:\.[a-z]+)?$/i.test(name)) continue
+    try { notices.push(`\n--- ${name} ---\n${readFileSync(join(directory, name), 'utf8')}`) } catch { /* some packages use notice directories */ }
+  }
+}
+writeFileSync(join(root, 'dist-agent', 'THIRD_PARTY_NOTICES.txt'), notices.join('\n') + '\n', 'utf8')
+console.log('[loong] production dependency notices written')

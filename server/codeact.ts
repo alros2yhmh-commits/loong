@@ -13,8 +13,8 @@
    THE BOUNDARY
 
    The model's code never runs in this process. It runs in a child Node started
-   with `--permission` and no `--allow-*` flags, so the OS-enforced permission
-   model refuses it: filesystem, child_process, worker_threads, inspector and
+   with `--permission` and no `--allow-*` flags, so the Node permission
+   model refuses those APIs: filesystem, child_process, worker_threads, inspector and
    native addons. `vm` is not used and never was a boundary — handing a context
    the host `Object` hands it the host `Function`, and from there the host
    realm, which is a two-line escape to `require('child_process')`.
@@ -52,8 +52,9 @@ const STARTUP_MS = 5_000
 async function snapshot(abs: string): Promise<Buffer | null> {
   try {
     return await readFile(abs)
-  } catch {
-    return null
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw new Error(`Cannot snapshot file before editing: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
@@ -184,7 +185,7 @@ export function createCodeTool(autoApprove: boolean, runId: string) {
       const child: ChildProcess = spawn(
         process.execPath,
         [
-          '--permission',
+          process.allowedNodeEnvironmentFlags.has('--permission') ? '--permission' : '--experimental-permission',
           '--no-addons',
           '--disallow-code-generation-from-strings',
           '--input-type=module',
@@ -196,6 +197,8 @@ export function createCodeTool(autoApprove: boolean, runId: string) {
           /* a stripped environment: the child needs nothing, and an inherited
              NODE_OPTIONS would be a way back in */
           env: {
+            // Electron's executable must remain in Node mode for the isolated child.
+            ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
             PATH: process.env.PATH ?? '',
             SYSTEMROOT: process.env.SYSTEMROOT ?? '',
             TMPDIR: process.env.TMPDIR ?? '',

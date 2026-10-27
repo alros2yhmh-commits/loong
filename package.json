@@ -1,7 +1,7 @@
 {
   "name": "loong",
   "private": true,
-  "version": "2.9.3",
+  "version": "3.0.0-beta.1",
   "type": "module",
   "author": "Professor Hamza Mahmoud Ramadan",
   "description": "Loong — a desktop coding agent. One brain, real tools, a UI built to be read.",
@@ -11,12 +11,23 @@
     "dev:front": "vite",
     "dev:agent": "node server/start.ts",
     "build": "tsc --noEmit && tsc -p tsconfig.server.json && vite build && node scripts/build-agent.mjs",
-    "build:electron": "electron-builder --dir",
-    "build:exe": "electron-builder",
+    "build:electron": "npm run build && electron-builder --dir",
+    "build:exe": "npm run build && electron-builder --win nsis --x64",
     "test": "node --test --experimental-test-coverage --import tsx --import ./tests/preload.ts ./tests/*.test.ts",
     "lint": "tsc --noEmit",
     "audit:ui": "node scripts/audit-ui.mjs",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package",
+    "preinstall": "node scripts/check-node.mjs",
+    "desktop": "electron .",
+    "build:linux": "npm run build && electron-builder --linux AppImage --x64",
+    "smoke:bundle": "node scripts/smoke-bundle.mjs",
+    "smoke:desktop": "node scripts/smoke-desktop.mjs",
+    "checksums": "node scripts/checksums.mjs",
+    "eval:list": "node --import tsx scripts/evaluate.ts --list",
+    "eval:check": "node --import tsx scripts/evaluate.ts --self-test",
+    "eval": "node --import tsx scripts/evaluate.ts",
+    "smoke:ui": "node scripts/smoke-ui.mjs",
+    "smoke:runtime": "node scripts/smoke-runtime.mjs"
   },
   "dependencies": {
     "@ag-ui/client": "^1.0.3",
@@ -52,7 +63,7 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.0",
-    "electron": "^33.3.1",
+    "electron": "44.9.3",
     "electron-builder": "^25.1.8",
     "patch-package": "^8.0.1",
     "rcedit": "^5.0.2",
@@ -97,10 +108,24 @@
     "nsis": {
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "oneClick": true,
+      "oneClick": false,
       "perMachine": false,
-      "shortcutName": "Loong"
+      "shortcutName": "Loong",
+      "artifactName": "${productName}-${version}-Setup-${arch}.${ext}",
+      "allowToChangeInstallationDirectory": true
+    },
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Development",
+      "icon": "build/icon.png"
     }
   },
-  "productName": "Loong"
+  "productName": "Loong",
+  "engines": {
+    "node": ">=24 <25",
+    "npm": ">=11"
+  }
 }

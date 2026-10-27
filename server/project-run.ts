@@ -123,6 +123,10 @@ function startProject(runId: string, launch: Launch): Running {
   }
   proc.stdout?.on('data', (d) => noteOutput(entry, String(d)))
   proc.stderr?.on('data', (d) => noteOutput(entry, String(d)))
+  proc.once('error', (error) => {
+    entry.exited = true
+    noteOutput(entry, `\nProcess failed to start: ${error.message}`)
+  })
   proc.on('exit', () => {
     entry.exited = true
   })
@@ -139,22 +143,15 @@ async function portAnswers(url: string): Promise<boolean> {
   }
 }
 
-/** the ports the common frameworks use when their banner is quiet */
-const DEFAULT_PORTS = [5173, 3000, 4321, 8080, 8000, 4200]
-
 async function resolveUrl(entry: Running, timeoutMs: number): Promise<string> {
   const started = Date.now()
   while (Date.now() - started < timeoutMs) {
-    if (entry.url && (await portAnswers(entry.url))) return entry.url
     if (entry.exited) break
+    if (entry.url && (await portAnswers(entry.url)) && !entry.exited) return entry.url
     await new Promise((r) => setTimeout(r, 700))
   }
-  for (const port of DEFAULT_PORTS) {
-    const candidate = `http://127.0.0.1:${port}`
-    if (await portAnswers(candidate)) return candidate
-  }
   throw new Error(
-    `The server started but no port answered within ${Math.round(timeoutMs / 1000)}s.\n\n${entry.output.slice(-1_500)}`,
+    `Tool failed: the launched process did not report a ready URL within ${Math.round(timeoutMs / 1000)}s.\n\n${entry.output.slice(-1_500)}`,
   )
 }
 
@@ -211,7 +208,7 @@ export function createRunProjectTool(runId: string, autoApprove = false) {
       try {
         launch = detectProject()
       } catch (err) {
-        return (err as Error).message
+        return `Tool failed: ${(err as Error).message}`
       }
 
       const approved = await approve(
@@ -227,7 +224,8 @@ export function createRunProjectTool(runId: string, autoApprove = false) {
       try {
         url = await resolveUrl(entry, waitMs ?? 45_000)
       } catch (err) {
-        return (err as Error).message
+        await stopProject(runId)
+        return `Tool failed: ${(err as Error).message}`
       }
 
       const tail = entry.output.slice(-2_500)

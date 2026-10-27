@@ -1,0 +1,77 @@
+name: Publish tagged release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+          cache: npm
+      - name: Check tag matches package version
+        shell: bash
+        run: node -e 'const p=require("./package.json"); if(process.env.GITHUB_REF_NAME!==`v${p.version}`) throw Error("Tag must match package.json version")'
+      - run: npm ci
+      - run: npm test
+      - run: npm run eval:check
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        run: npm run build:exe
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Build Linux AppImage
+        if: runner.os == 'Linux'
+        run: npm run build:linux
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - run: npm run smoke:bundle
+      - run: npm run smoke:runtime
+      - name: Verify packaged desktop (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node scripts/smoke-desktop.mjs --packaged app/linux-unpacked/loong
+        env:
+          LOONG_DISABLE_SANDBOX: '1'
+      - name: Verify packaged desktop (Windows)
+        if: runner.os == 'Windows'
+        run: node scripts/smoke-desktop.mjs --packaged app/win-unpacked/Loong.exe
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: release-${{ runner.os }}
+          path: |
+            app/*.exe
+            app/*.AppImage
+          if-no-files-found: error
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          path: release-artifacts
+          pattern: release-*
+          merge-multiple: true
+      - run: node scripts/checksums.mjs release-artifacts
+      - name: Create prerelease or release with checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          flags=()
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" release-artifacts/* --verify-tag --generate-notes "${flags[@]}"

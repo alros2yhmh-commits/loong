@@ -1,22 +1,10 @@
-/* ---------------------------------------------------------------------------
-   The bridge the renderer is allowed to see: a folder picker, external links,
-   and the session token the main process minted. The agent's API key never
-   crosses this boundary.
-   --------------------------------------------------------------------------- */
+/* A narrow bridge. Provider keys never pass through it. */
 const { contextBridge, ipcRenderer } = require('electron')
-
-function sessionToken() {
-  try {
-    return String(ipcRenderer.sendSync('loong:token') ?? '')
-  } catch {
-    return ''
-  }
-}
-
+let config = { token: '', apiBase: '' }
+try { config = ipcRenderer.sendSync('loong:config') || config } catch {}
 contextBridge.exposeInMainWorld('loong', {
-  token: sessionToken(),
+  token: config.token,
+  apiBase: config.apiBase,
   pickWorkspace: () => ipcRenderer.invoke('pick-workspace'),
-  /* a link in a transcript is a reference, not a route: hand it to the OS
-     instead of navigating the app */
-  openExternal: (url) => ipcRenderer.invoke('open-external', url),
+  openExternal: (url) => ipcRenderer.invoke('open-external', String(url)),
 })
