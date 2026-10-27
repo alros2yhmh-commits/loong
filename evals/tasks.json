@@ -1,0 +1,400 @@
+{
+  "version": 1,
+  "description": "Small repository-level functional regression tasks. Harness self-test is not an agent benchmark score.",
+  "tasks": [
+    {
+      "id": "clamp-boundaries",
+      "category": "bugfix",
+      "language": "en",
+      "prompt": "Fix clamp(value,min,max) so both bounds are respected, reversed bounds throw RangeError, and NaN remains NaN. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "export const clamp=(v,min,max)=>Math.max(min,v)"
+      },
+      "oracle": {
+        "src/module.mjs": "export function clamp(v,min,max){if(min>max)throw new RangeError(\"bounds\");return Math.min(max,Math.max(min,v))}"
+      },
+      "checks": "assert.equal(m.clamp(12,0,10),10);assert.equal(m.clamp(-2,0,10),0);assert.equal(m.clamp(4,0,10),4);assert.ok(Number.isNaN(m.clamp(NaN,0,10)));assert.throws(()=>m.clamp(1,4,2),RangeError)"
+    },
+    {
+      "id": "pagination-immutability",
+      "category": "bugfix",
+      "language": "ar",
+      "prompt": "اصلح paginate(items,page,size): الصفحة تبدأ من 1، لا تغير المصفوفة الأصلية، وأعد [] للصفحة الزائدة وارفض page أو size غير الصحيحين. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "export const paginate=(items,page,size)=>items.splice(page*size,size)"
+      },
+      "oracle": {
+        "src/module.mjs": "export function paginate(items,page,size){if(!Number.isInteger(page)||page<1||!Number.isInteger(size)||size<1)throw new RangeError(\"pagination\");return items.slice((page-1)*size,page*size)}"
+      },
+      "checks": "const x=[1,2,3,4,5];assert.deepEqual(m.paginate(x,1,2),[1,2]);assert.deepEqual(m.paginate(x,3,2),[5]);assert.deepEqual(m.paginate(x,7,2),[]);assert.deepEqual(x,[1,2,3,4,5]);assert.throws(()=>m.paginate(x,0,2));assert.throws(()=>m.paginate(x,1,1.5))"
+    },
+    {
+      "id": "stable-sort",
+      "category": "refactor",
+      "language": "en",
+      "prompt": "Refactor sortBy(items,key): sort ascending, retain equal-key input order, place missing keys last, and do not mutate input. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "export const sortBy=(a,k)=>a.sort((x,y)=>x[k]>y[k]?1:-1)"
+      },
+      "oracle": {
+        "src/module.mjs": "export const sortBy=(a,k)=>a.map((v,i)=>({v,i})).sort((a,b)=>{const x=a.v[k],y=b.v[k];return x==null&&y==null?a.i-b.i:x==null?1:y==null?-1:x<y?-1:x>y?1:a.i-b.i}).map(x=>x.v)"
+      },
+      "checks": "const a=[{n:2,id:\"a\"},{n:1,id:\"b\"},{n:2,id:\"c\"},{id:\"d\"}];assert.deepEqual(m.sortBy(a,\"n\").map(x=>x.id),[\"b\",\"a\",\"c\",\"d\"]);assert.equal(a[0].id,\"a\");assert.deepEqual(m.sortBy([],\"n\"),[])"
+    },
+    {
+      "id": "csv-parser",
+      "category": "feature",
+      "language": "en",
+      "prompt": "Implement parseCSV(text) for comma-separated rows with quoted commas, doubled quote escaping, quoted newlines, CRLF and empty fields. Empty input returns []. Reject an unclosed quoted field. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "export const parseCSV=s=>s.split(\"\\n\").map(r=>r.split(\",\"))"
+      },
+      "oracle": {
+        "src/module.mjs": "export function parseCSV(s){if(!s)return [];let rows=[],row=[],field='',q=false;for(let i=0;i<s.length;i++){const c=s[i];if(c==='\"'){if(q&&s[i+1]==='\"'){field+='\"';i++}else q=!q}else if(c===','&&!q){row.push(field);field=''}else if((c==='\\n'||c==='\\r')&&!q){row.push(field);rows.push(row);row=[];field='';if(c==='\\r'&&s[i+1]==='\\n')i++}else field+=c}if(q)throw new Error('unclosed quote');if(field||row.length||!/[\\r\\n]$/.test(s)){row.push(field);rows.push(row)}return rows}"
+      },
+      "checks": "assert.deepEqual(m.parseCSV('a,\"b,c\",d\\r\\n1,\"x\"\"y\",'),[['a','b,c','d'],['1','x\"y','']]);assert.deepEqual(m.parseCSV('\"hello\\nworld\",2'),[['hello\\nworld','2']]);assert.deepEqual(m.parseCSV(''),[]);assert.throws(()=>m.parseCSV('\"unterminated'))"
+    },
+    {
+      "id": "jsonl-diagnostics",
+      "category": "bugfix",
+      "language": "en",
+      "prompt": "Implement parseJSONL(text): ignore blank lines, return parsed values, and report malformed JSON with its original 1-based line number. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "export const parseJSONL=s=>s.split(\"\\n\").map(JSON.parse)"
+      },
+      "oracle": {
+        "src/module.mjs": "export function parseJSONL(s){const out=[];s.split(/\\r?\\n/).forEach((line,i)=>{if(!line.trim())return;try{out.push(JSON.parse(line))}catch{throw new SyntaxError('Invalid JSON at line '+(i+1))}});return out}"
+      },
+      "checks": "assert.deepEqual(m.parseJSONL(' {\"a\":1}\\n\\n2\\r\\n'),[{a:1},2]);assert.deepEqual(m.parseJSONL('  '),[]);assert.throws(()=>m.parseJSONL('{}\\n\\nwrong'),/line 3/)"
+    },
+    {
+      "id": "retry-async",
+      "category": "async",
+      "language": "en",
+      "prompt": "Fix retry(fn,attempts): await each call, retry rejected promises up to the specified total attempt count, return success, and rethrow the last error. Reject invalid attempt counts. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "export async function retry(fn,n){return fn()}"
+      },
+      "oracle": {
+        "src/module.mjs": "export async function retry(fn,n){if(!Number.isInteger(n)||n<1)throw new RangeError(\"attempts\");let last;for(let i=0;i<n;i++){try{return await fn(i+1)}catch(e){last=e}}throw last}"
+      },
+      "checks": "let n=0;assert.equal(await m.retry(async()=>{if(++n<3)throw new Error(\"busy\");return 42},3),42);assert.equal(n,3);const err=new Error(\"last\");await assert.rejects(m.retry(async()=>{throw err},2),e=>e===err);await assert.rejects(m.retry(async()=>1,0))"
+    },
+    {
+      "id": "async-mutex",
+      "category": "async",
+      "language": "ar",
+      "prompt": "اكمل createMutex() الذي يرجع run(fn). نفذ المهام بترتيب وصولها دون تداخل، واسمح للمهمة التالية بالعمل بعد فشل السابقة وأعد قيمة كل مهمة. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "export const createMutex=()=>({run:fn=>fn()})"
+      },
+      "oracle": {
+        "src/module.mjs": "export function createMutex(){let tail=Promise.resolve();return{run(fn){const result=tail.then(fn);tail=result.catch(()=>{});return result}}}"
+      },
+      "checks": "const mutex=m.createMutex(),log=[];const a=mutex.run(async()=>{log.push(\"a1\");await new Promise(r=>setTimeout(r,15));log.push(\"a2\");return 7});const b=mutex.run(async()=>{log.push(\"b\");throw Error(\"x\")});const settled=Promise.allSettled([a,b]);const c=mutex.run(()=>{log.push(\"c\");return 9});const rs=await settled;assert.equal(rs[0].value,7);assert.equal(rs[1].status,\"rejected\");assert.equal(await c,9);assert.deepEqual(log,[\"a1\",\"a2\",\"b\",\"c\"])"
+    },
+    {
+      "id": "concurrency-map",
+      "category": "async",
+      "language": "en",
+      "prompt": "Implement mapLimit(items,limit,fn): bounded concurrency, stable output order, propagate failure, [] for empty input, reject invalid limits. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "export const mapLimit=(items,n,fn)=>Promise.all(items.map(fn))"
+      },
+      "oracle": {
+        "src/module.mjs": "export async function mapLimit(items,n,fn){if(!Number.isInteger(n)||n<1)throw new RangeError(\"limit\");const out=new Array(items.length);let next=0;await Promise.all(Array.from({length:Math.min(n,items.length)},async()=>{while(next<items.length){const i=next++;out[i]=await fn(items[i],i)}}));return out}"
+      },
+      "checks": "let active=0,max=0;const out=await m.mapLimit([4,1,3,2],2,async x=>{active++;max=Math.max(max,active);await new Promise(r=>setTimeout(r,x));active--;return x*2});assert.deepEqual(out,[8,2,6,4]);assert.equal(max,2);assert.deepEqual(await m.mapLimit([],2,async x=>x),[]);await assert.rejects(m.mapLimit([1],0,async x=>x));await assert.rejects(m.mapLimit([1],1,async()=>{throw Error(\"failure\")}),/failure/)"
+    },
+    {
+      "id": "ttl-cache",
+      "category": "state",
+      "language": "en",
+      "prompt": "Implement createCache(now): set(key,value,ttlMs), get(key), delete(key). Expire when now>=deadline, support cached falsy values, isolate keys, and reject negative TTL. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "export const createCache=()=>{const x={};return{set(k,v){x[k]=v},get:k=>x[k],delete:k=>delete x[k]}}"
+      },
+      "oracle": {
+        "src/module.mjs": "export function createCache(now=Date.now){const x=new Map();return{set(k,v,t){if(t<0)throw new RangeError(\"ttl\");x.set(k,{v,end:now()+t})},get(k){const a=x.get(k);if(!a)return undefined;if(now()>=a.end){x.delete(k);return undefined}return a.v},delete:k=>x.delete(k)}}"
+      },
+      "checks": "let time=10;const c=m.createCache(()=>time);c.set(\"a\",0,5);c.set(\"__proto__\",false,20);assert.equal(c.get(\"a\"),0);time=15;assert.equal(c.get(\"a\"),undefined);assert.equal(c.get(\"__proto__\"),false);assert.equal(c.delete(\"__proto__\"),true);assert.equal(c.get(\"__proto__\"),undefined);assert.throws(()=>c.set(\"x\",1,-1))"
+    },
+    {
+      "id": "lru-cache",
+      "category": "state",
+      "language": "en",
+      "prompt": "Implement createLRU(capacity) exposing get/set. Reads and overwrites refresh recency, evict oldest beyond capacity, support falsy values, and reject capacity<1. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "export const createLRU=()=>new Map()"
+      },
+      "oracle": {
+        "src/module.mjs": "export function createLRU(cap){if(!Number.isInteger(cap)||cap<1)throw new RangeError(\"capacity\");const x=new Map();return{get(k){if(!x.has(k))return undefined;const v=x.get(k);x.delete(k);x.set(k,v);return v},set(k,v){x.delete(k);x.set(k,v);if(x.size>cap)x.delete(x.keys().next().value)}}}"
+      },
+      "checks": "const c=m.createLRU(2);c.set(\"a\",0);c.set(\"b\",2);assert.equal(c.get(\"a\"),0);c.set(\"c\",3);assert.equal(c.get(\"b\"),undefined);c.set(\"a\",4);c.set(\"d\",5);assert.equal(c.get(\"c\"),undefined);assert.equal(c.get(\"a\"),4);assert.throws(()=>m.createLRU(0))"
+    },
+    {
+      "id": "event-unsubscribe",
+      "category": "state",
+      "language": "en",
+      "prompt": "Fix createBus(): on(event,listener) returns unsubscribe; emit preserves registration order and uses a listener snapshot so unsubscribe during emit does not skip that emission. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "export function createBus(){const x={};return{on(k,f){(x[k]??=[]).push(f)},emit(k,v){for(const f of x[k]??[])f(v)}}}"
+      },
+      "oracle": {
+        "src/module.mjs": "export function createBus(){const x=new Map();return{on(k,f){const a=x.get(k)??[];a.push(f);x.set(k,a);return()=>{const i=a.indexOf(f);if(i>=0)a.splice(i,1)}},emit(k,v){for(const f of [...x.get(k)??[]])f(v)}}}"
+      },
+      "checks": "const b=m.createBus(),log=[];let off;const first=b.on(\"x\",v=>{log.push(\"a\"+v);off()});off=b.on(\"x\",v=>log.push(\"b\"+v));b.emit(\"x\",1);b.emit(\"x\",2);first();first();b.emit(\"x\",3);assert.deepEqual(log,[\"a1\",\"b1\",\"a2\"])"
+    },
+    {
+      "id": "money-cents",
+      "category": "data",
+      "language": "ar",
+      "prompt": "اصلح sumMoney(values): اجمع القيم النقدية بوحدات سنت صحيحة ثم أعد الرقم العشري. اقبل strings أو numbers بمنزلتين عشريتين وارفض القيم غير الرقمية. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "export const sumMoney=a=>a.reduce((x,y)=>x+y,0)"
+      },
+      "oracle": {
+        "src/module.mjs": "export function sumMoney(a){return a.reduce((s,v)=>{if((typeof v!==\"string\"&&typeof v!==\"number\")||!/^[-+]?\\d+(?:\\.\\d{1,2})?$/.test(String(v)))throw new TypeError(\"money\");return s+Math.round(Number(v)*100)},0)/100}"
+      },
+      "checks": "assert.equal(m.sumMoney([0.1,0.2]),0.3);assert.equal(m.sumMoney([\"12.34\",\"-2.20\",1]),11.14);assert.equal(m.sumMoney([]),0);assert.throws(()=>m.sumMoney([\"oops\"]));assert.throws(()=>m.sumMoney([NaN]))"
+    },
+    {
+      "id": "merge-records",
+      "category": "data",
+      "language": "en",
+      "prompt": "Implement mergeById(base,updates): immutable merge, update existing fields, append new IDs, last update wins, preserve original order of existing records. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "export const mergeById=(a,b)=>[...a,...b]"
+      },
+      "oracle": {
+        "src/module.mjs": "export function mergeById(a,b){const out=a.map(x=>({...x})),index=new Map(out.map((x,i)=>[x.id,i]));for(const u of b){if(index.has(u.id)){const i=index.get(u.id);out[i]={...out[i],...u}}else{index.set(u.id,out.length);out.push({...u})}}return out}"
+      },
+      "checks": "const a=[{id:1,name:\"a\",keep:1},{id:2,name:\"b\"}];assert.deepEqual(m.mergeById(a,[{id:2,name:\"B\"},{id:3,name:\"c\"},{id:2,done:true}]),[{id:1,name:\"a\",keep:1},{id:2,name:\"B\",done:true},{id:3,name:\"c\"}]);assert.equal(a[1].name,\"b\")"
+    },
+    {
+      "id": "group-count",
+      "category": "data",
+      "language": "en",
+      "prompt": "Fix groupCount(items,key): count values including __proto__, constructor, empty string, and missing/null under the key \"unknown\". Return a JSON-serializable dictionary. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "export function groupCount(a,k){const x={};for(const v of a)x[v[k]]=(x[v[k]]||0)+1;return x}"
+      },
+      "oracle": {
+        "src/module.mjs": "export function groupCount(a,k){const x=Object.create(null);for(const v of a){const key=String(v[k]??\"unknown\");x[key]=(x[key]??0)+1}return x}"
+      },
+      "checks": "const r=m.groupCount([{k:\"__proto__\"},{k:\"constructor\"},{k:\"\"},{},{k:null},{k:\"__proto__\"}],\"k\");assert.equal(r.__proto__,2);assert.equal(r.constructor,1);assert.equal(r[\"\"],1);assert.equal(r.unknown,2);assert.deepEqual(JSON.parse(JSON.stringify(r)),JSON.parse('{\"__proto__\":2,\"constructor\":1,\"\":1,\"unknown\":2}'))"
+    },
+    {
+      "id": "query-codec",
+      "category": "feature",
+      "language": "en",
+      "prompt": "Implement encodeQuery(object) and decodeQuery(string): repeated values use arrays, omit null/undefined, percent-encode unicode and spaces, and preserve empty strings. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "export const encodeQuery=o=>Object.entries(o).map(x=>x.join(\"=\")).join(\"&\");export const decodeQuery=s=>Object.fromEntries(s.split(\"&\").map(x=>x.split(\"=\")))"
+      },
+      "oracle": {
+        "src/module.mjs": "export function encodeQuery(o){const q=new URLSearchParams();for(const [k,v]of Object.entries(o)){if(v==null)continue;for(const x of Array.isArray(v)?v:[v])if(x!=null)q.append(k,String(x))}return q.toString()}export function decodeQuery(s){const o=Object.create(null);for(const[k,v]of new URLSearchParams(s.replace(/^\\?/,\"\"))){if(Object.hasOwn(o,k))o[k]=Array.isArray(o[k])?[...o[k],v]:[o[k],v];else o[k]=v}return o}"
+      },
+      "checks": "const encoded=m.encodeQuery({q:\"مرحبا world\",tag:[\"a&b\",\"c\"],empty:\"\",skip:null});const o=m.decodeQuery(encoded);assert.equal(o.q,\"مرحبا world\");assert.deepEqual(o.tag,[\"a&b\",\"c\"]);assert.equal(o.empty,\"\");assert.equal(o.skip,undefined);assert.equal(m.decodeQuery(\"?a=x%3Dy\").a,\"x=y\")"
+    },
+    {
+      "id": "path-jail",
+      "category": "security",
+      "language": "en",
+      "prompt": "Fix safeJoin(root,relativePath) using Node path resolution: reject absolute user paths and lexical traversal outside root, allow sibling-prefix-looking names inside root, and return an absolute path. This function is lexical, not a symlink sandbox. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "import path from \"node:path\";export const safeJoin=(root,p)=>path.join(root,p)"
+      },
+      "oracle": {
+        "src/module.mjs": "import path from \"node:path\";export function safeJoin(root,p){if(path.isAbsolute(p))throw Error(\"absolute\");const base=path.resolve(root),out=path.resolve(base,p),rel=path.relative(base,out);if(rel===\"..\"||rel.startsWith(\"..\"+path.sep)||path.isAbsolute(rel))throw Error(\"outside\");return out}"
+      },
+      "checks": "const path=await import(\"node:path\");const root=path.resolve(\"/tmp/project\");assert.equal(m.safeJoin(root,\"src/../ok\"),path.join(root,\"ok\"));assert.throws(()=>m.safeJoin(root,\"../project-evil/file\"));assert.throws(()=>m.safeJoin(root,path.resolve(\"/etc/passwd\")));assert.equal(m.safeJoin(root,\"..name\"),path.join(root,\"..name\"))"
+    },
+    {
+      "id": "host-allowlist",
+      "category": "security",
+      "language": "en",
+      "prompt": "Implement allowedHost(host,domain): case-insensitive exact domain or real subdomain only, optional trailing dot accepted; reject sibling suffix tricks and URL/path/userinfo input. Do not claim this is a complete network sandbox. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "export const allowedHost=(host,domain)=>host.endsWith(domain)"
+      },
+      "oracle": {
+        "src/module.mjs": "export function allowedHost(host,domain){const clean=s=>String(s).toLowerCase().replace(/\\.$/,\"\");const h=clean(host),d=clean(domain);if(!/^[a-z0-9.-]+$/.test(h)||!d||!h||h.includes(\"..\")||!h.split(\".\").every(x=>x&&!x.startsWith(\"-\")&&!x.endsWith(\"-\")))return false;return h===d||h.endsWith(\".\"+d)}"
+      },
+      "checks": "assert.equal(m.allowedHost(\"Api.Example.com.\",\"example.com\"),true);assert.equal(m.allowedHost(\"example.com\",\"example.com\"),true);for(const h of [\"evilexample.com\",\"example.com.evil\",\"https://example.com\",\"user@example.com\",\".example.com\",\"a..example.com\"])assert.equal(m.allowedHost(h,\"example.com\"),false,h)"
+    },
+    {
+      "id": "redact-headers",
+      "category": "security",
+      "language": "en",
+      "prompt": "Implement redactHeaders(headers): return a new object, redact Authorization/Cookie/X-API-Key case-insensitively, preserve other values and original casing, never mutate input. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "export const redactHeaders=h=>h"
+      },
+      "oracle": {
+        "src/module.mjs": "export function redactHeaders(h){return Object.fromEntries(Object.entries(h).map(([k,v])=>[k,/^(authorization|cookie|x-api-key)$/i.test(k)?\"[REDACTED]\":v]))}"
+      },
+      "checks": "const h={Authorization:\"secret\",cookie:\"private\",\"X-Api-Key\":\"token\",Accept:\"json\"};const r=m.redactHeaders(h);assert.deepEqual(r,{Authorization:\"[REDACTED]\",cookie:\"[REDACTED]\",\"X-Api-Key\":\"[REDACTED]\",Accept:\"json\"});assert.equal(h.Authorization,\"secret\");assert.notEqual(r,h)"
+    },
+    {
+      "id": "config-validation",
+      "category": "configuration",
+      "language": "en",
+      "prompt": "Implement loadConfig(env): PORT integer 1..65535 default3000, DEBUG true only for \"true\" or \"1\", optional HOST defaults127.0.0.1. Reject invalid PORT rather than silently accepting NaN. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "export const loadConfig=e=>({port:Number(e.PORT)||3000,debug:!!e.DEBUG,host:e.HOST||\"0.0.0.0\"})"
+      },
+      "oracle": {
+        "src/module.mjs": "export function loadConfig(e){const p=e.PORT===undefined?3000:Number(e.PORT);if(!Number.isInteger(p)||p<1||p>65535)throw new RangeError(\"PORT\");return{port:p,debug:e.DEBUG===\"true\"||e.DEBUG===\"1\",host:e.HOST??\"127.0.0.1\"}}"
+      },
+      "checks": "assert.deepEqual(m.loadConfig({}),{port:3000,debug:false,host:\"127.0.0.1\"});assert.equal(m.loadConfig({PORT:\"8080\",DEBUG:\"false\"}).debug,false);assert.equal(m.loadConfig({DEBUG:\"1\"}).debug,true);for(const x of [\"0\",\"65536\",\"garbage\",\"3.4\"])assert.throws(()=>m.loadConfig({PORT:x}))"
+    },
+    {
+      "id": "dotenv-parser",
+      "category": "configuration",
+      "language": "ar",
+      "prompt": "اكمل parseEnv(text): تجاهل التعليقات والسطور الفارغة، ادعم export KEY=value والقيم المقتبسة ووجود = داخل القيمة، واحتفظ بالفراغات داخل الاقتباس فقط. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "export const parseEnv=s=>Object.fromEntries(s.split(\"\\n\").map(l=>l.split(\"=\")))"
+      },
+      "oracle": {
+        "src/module.mjs": "export function parseEnv(s){const out={};for(const raw of s.split(/\\r?\\n/)){const line=raw.trim();if(!line||line.startsWith('#'))continue;const match=/^(?:export\\s+)?([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(.*)$/.exec(line);if(!match)throw Error('invalid env');let v=match[2];if((v.startsWith('\"')&&v.endsWith('\"'))||(v.startsWith(\"'\")&&v.endsWith(\"'\")))v=v.slice(1,-1);else v=v.replace(/\\s+#.*$/, '').trim();out[match[1]]=v}return out}"
+      },
+      "checks": "assert.deepEqual(m.parseEnv('# comment\\nexport A=one=two\\nB=\" keep spaces \"\\nC= plain # comment\\n'),{A:'one=two',B:' keep spaces ',C:'plain'});assert.deepEqual(m.parseEnv(''),{});assert.throws(()=>m.parseEnv('not-an-assignment'))"
+    },
+    {
+      "id": "deep-merge",
+      "category": "refactor",
+      "language": "en",
+      "prompt": "Implement mergeConfig(base,override): recursively merge plain objects, replace arrays, retain explicit null and false, avoid mutating inputs, and reject prototype-pollution keys. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "export const mergeConfig=(a,b)=>({...a,...b})"
+      },
+      "oracle": {
+        "src/module.mjs": "export function mergeConfig(a,b){const plain=x=>x&&Object.getPrototypeOf(x)===Object.prototype;const clone=x=>Array.isArray(x)?x.map(clone):plain(x)?mergeConfig({},x):x;const out={};for(const[k,v]of Object.entries(a))out[k]=clone(v);for(const[k,v]of Object.entries(b)){if(['__proto__','constructor','prototype'].includes(k))throw Error('unsafe key');out[k]=plain(v)?mergeConfig(plain(out[k])?out[k]:{},v):clone(v)}return out}"
+      },
+      "checks": "const a={nested:{a:1,b:2},arr:[1,2],yes:true};const r=m.mergeConfig(a,{nested:{b:3},arr:[4],yes:false,x:null});assert.deepEqual(r,{nested:{a:1,b:3},arr:[4],yes:false,x:null});r.nested.a=9;assert.equal(a.nested.a,1);assert.throws(()=>m.mergeConfig({},JSON.parse('{\"__proto__\":{\"polluted\":true}}')));assert.equal({}.polluted,undefined)"
+    },
+    {
+      "id": "topological-sort",
+      "category": "algorithm",
+      "language": "en",
+      "prompt": "Implement topoSort(nodes,edges) for directed edges [before,after]. Include isolated nodes, return dependencies first, reject cycles and unknown nodes. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "export const topoSort=nodes=>nodes"
+      },
+      "oracle": {
+        "src/module.mjs": "export function topoSort(nodes,edges){const indeg=new Map(nodes.map(n=>[n,0])),next=new Map(nodes.map(n=>[n,[]]));for(const[a,b]of edges){if(!indeg.has(a)||!indeg.has(b))throw Error(\"unknown node\");next.get(a).push(b);indeg.set(b,indeg.get(b)+1)}const queue=nodes.filter(n=>indeg.get(n)===0),out=[];for(let i=0;i<queue.length;i++){const n=queue[i];out.push(n);for(const x of next.get(n)){indeg.set(x,indeg.get(x)-1);if(indeg.get(x)===0)queue.push(x)}}if(out.length!==nodes.length)throw Error(\"cycle\");return out}"
+      },
+      "checks": "const out=m.topoSort([\"c\",\"a\",\"z\",\"b\"],[[\"a\",\"b\"],[\"b\",\"c\"]]);assert.equal(new Set(out).size,4);assert.ok(out.indexOf(\"a\")<out.indexOf(\"b\")&&out.indexOf(\"b\")<out.indexOf(\"c\"));assert.ok(out.includes(\"z\"));assert.throws(()=>m.topoSort([\"a\",\"b\"],[[\"a\",\"b\"],[\"b\",\"a\"]]),/cycle/);assert.throws(()=>m.topoSort([\"a\"],[[\"a\",\"x\"]]))"
+    },
+    {
+      "id": "semver-compare",
+      "category": "algorithm",
+      "language": "en",
+      "prompt": "Implement compareVersions(a,b) for numeric major.minor.patch (optional leading v). Return -1/0/1, compare numerically, reject malformed versions; prerelease support is outside scope. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "export const compareVersions=(a,b)=>a.localeCompare(b)"
+      },
+      "oracle": {
+        "src/module.mjs": "export function compareVersions(a,b){const parse=s=>{const m=/^v?(\\d+)\\.(\\d+)\\.(\\d+)$/.exec(s);if(!m)throw Error(\"version\");return m.slice(1).map(Number)};const x=parse(a),y=parse(b);for(let i=0;i<3;i++)if(x[i]!==y[i])return x[i]<y[i]?-1:1;return 0}"
+      },
+      "checks": "assert.equal(m.compareVersions(\"1.10.0\",\"1.2.0\"),1);assert.equal(m.compareVersions(\"v2.0.0\",\"2.0.0\"),0);assert.equal(m.compareVersions(\"1.0.9\",\"1.1.0\"),-1);assert.throws(()=>m.compareVersions(\"1.2\",\"1.0.0\"))"
+    },
+    {
+      "id": "sse-parser",
+      "category": "streaming",
+      "language": "en",
+      "prompt": "Implement parseSSE(text) returning complete frames {id,event,data}. Support CRLF, comments, multiline data, ignore incomplete trailing frame, default event to message; do not JSON parse data. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "export const parseSSE=s=>s.split(\"\\n\\n\").map(data=>({data}))"
+      },
+      "oracle": {
+        "src/module.mjs": "export function parseSSE(s){const frames=s.replace(/\\r\\n/g,'\\n').split('\\n\\n');frames.pop();const out=[];for(const f of frames){let id='',event='message',data=[];for(const l of f.split('\\n')){if(l.startsWith(':'))continue;const i=l.indexOf(':'),k=i<0?l:l.slice(0,i),v=i<0?'':l.slice(i+1).replace(/^ /,'');if(k==='data')data.push(v);if(k==='event')event=v;if(k==='id')id=v}if(data.length)out.push({id,event,data:data.join('\\n')})}return out}"
+      },
+      "checks": "assert.deepEqual(m.parseSSE(':keepalive\\r\\nid: 7\\r\\nevent: update\\r\\ndata: first\\r\\ndata: second\\r\\n\\r\\ndata: pending'),[{id:'7',event:'update',data:'first\\nsecond'}]);assert.deepEqual(m.parseSSE('data: ok\\n\\n'),[{id:'',event:'message',data:'ok'}]);assert.deepEqual(m.parseSSE(':x\\n\\n'),[])"
+    },
+    {
+      "id": "event-reducer",
+      "category": "streaming",
+      "language": "en",
+      "prompt": "Implement applyEvent(state,event): accept only sequence>lastSequence, update count for increment, status for finish, reject gaps instead of silently losing an event. Initial state is {lastSequence:0,count:0,status:\"running\"}. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "export const applyEvent=(s,e)=>({...s,count:s.count+(e.amount||0),lastSequence:e.sequence})"
+      },
+      "oracle": {
+        "src/module.mjs": "export function applyEvent(s,e){if(e.sequence<=s.lastSequence)return s;if(e.sequence!==s.lastSequence+1)throw Error(\"gap\");return{...s,lastSequence:e.sequence,count:e.type===\"increment\"?s.count+e.amount:s.count,status:e.type===\"finish\"?e.status:s.status}}"
+      },
+      "checks": "const s={lastSequence:0,count:0,status:\"running\"};const a=m.applyEvent(s,{sequence:1,type:\"increment\",amount:3});assert.equal(a.count,3);assert.equal(m.applyEvent(a,{sequence:1,type:\"increment\",amount:3}),a);assert.throws(()=>m.applyEvent(a,{sequence:3,type:\"increment\",amount:1}),/gap/);const b=m.applyEvent(a,{sequence:2,type:\"finish\",status:\"partial\"});assert.equal(b.status,\"partial\");assert.equal(s.count,0)"
+    },
+    {
+      "id": "inventory-transaction",
+      "category": "multifile",
+      "language": "en",
+      "prompt": "Complete placeOrder(inventory,items) using inventory helpers. Validate all positive integer quantities and stock before changing anything; aggregate duplicate SKU lines; a failed order must leave inventory untouched. Return total units. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "import {getStock,setStock} from \"./inventory.mjs\";export function placeOrder(stock,items){for(const x of items)setStock(stock,x.sku,getStock(stock,x.sku)-x.qty);return items.length}",
+        "src/inventory.mjs": "export const getStock=(s,k)=>s[k]??0;export const setStock=(s,k,v)=>{s[k]=v}"
+      },
+      "oracle": {
+        "src/module.mjs": "import {getStock,setStock} from \"./inventory.mjs\";export function placeOrder(stock,items){const wanted=new Map();for(const x of items){if(!Number.isInteger(x.qty)||x.qty<1)throw Error(\"quantity\");wanted.set(x.sku,(wanted.get(x.sku)??0)+x.qty)}for(const[k,q]of wanted)if(getStock(stock,k)<q)throw Error(\"stock\");let total=0;for(const[k,q]of wanted){setStock(stock,k,getStock(stock,k)-q);total+=q}return total}"
+      },
+      "checks": "const stock={a:5,b:1};assert.throws(()=>m.placeOrder(stock,[{sku:\"a\",qty:2},{sku:\"b\",qty:2}]));assert.deepEqual(stock,{a:5,b:1});assert.equal(m.placeOrder(stock,[{sku:\"a\",qty:2},{sku:\"a\",qty:3}]),5);assert.equal(stock.a,0);assert.throws(()=>m.placeOrder(stock,[{sku:\"b\",qty:0}]));assert.throws(()=>m.placeOrder(stock,[{sku:\"missing\",qty:1}]))"
+    },
+    {
+      "id": "settings-migration",
+      "category": "multifile",
+      "language": "ar",
+      "prompt": "اكمل migrateSettings(input) مع defaults.mjs: انقل version1.theme إلى appearance.theme، احتفظ بالحقول الجديدة والصوت false، لا تغير input، وأعد version2. ارفض النسخ المستقبلية. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "import {defaults} from \"./defaults.mjs\";export const migrateSettings=x=>({...defaults,...x})",
+        "src/defaults.mjs": "export const defaults={version:2,appearance:{theme:\"dark\",font:14},sound:true}"
+      },
+      "oracle": {
+        "src/module.mjs": "import {defaults} from \"./defaults.mjs\";export function migrateSettings(x={}){if((x.version??1)>2)throw Error(\"future version\");const out={...defaults,...x,appearance:{...defaults.appearance,...x.appearance},version:2};if((x.version??1)===1&&x.theme)out.appearance.theme=x.theme;delete out.theme;return out}"
+      },
+      "checks": "const input={version:1,theme:\"light\",sound:false};const r=m.migrateSettings(input);assert.equal(r.version,2);assert.equal(r.appearance.theme,\"light\");assert.equal(r.sound,false);assert.equal(r.theme,undefined);assert.equal(input.theme,\"light\");assert.equal(m.migrateSettings({version:2,appearance:{theme:\"dark\",font:18}}).appearance.font,18);assert.throws(()=>m.migrateSettings({version:99}))"
+    },
+    {
+      "id": "http-router",
+      "category": "multifile",
+      "language": "en",
+      "prompt": "Implement createHandler() returning async Fetch API handler for GET /health and POST /sum JSON {values:number[]}. Return JSON 200 with result, 400 invalid JSON/input, 405 wrong method on known route, 404 unknown route. Use sum.mjs. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "import {sum} from \"./sum.mjs\";export const createHandler=()=>async req=>Response.json({sum:sum((await req.json()).values)})",
+        "src/sum.mjs": "export const sum=values=>values.reduce((a,b)=>a+b,0)"
+      },
+      "oracle": {
+        "src/module.mjs": "import {sum} from \"./sum.mjs\";export const createHandler=()=>async req=>{const p=new URL(req.url).pathname;if(p!==\"/health\"&&p!==\"/sum\")return Response.json({error:\"not found\"},{status:404});if(p===\"/health\")return req.method===\"GET\"?Response.json({ok:true}):Response.json({error:\"method\"},{status:405});if(req.method!==\"POST\")return Response.json({error:\"method\"},{status:405});try{const x=await req.json();if(!Array.isArray(x.values)||!x.values.every(v=>typeof v===\"number\"&&Number.isFinite(v)))throw Error();return Response.json({sum:sum(x.values)})}catch{return Response.json({error:\"invalid\"},{status:400})}}"
+      },
+      "checks": "const h=m.createHandler();assert.deepEqual(await(await h(new Request(\"http://local/health\"))).json(),{ok:true});assert.deepEqual(await(await h(new Request(\"http://local/sum\",{method:\"POST\",body:JSON.stringify({values:[1,2,3]})}))).json(),{sum:6});assert.equal((await h(new Request(\"http://local/sum\"))).status,405);assert.equal((await h(new Request(\"http://local/missing\"))).status,404);assert.equal((await h(new Request(\"http://local/sum\",{method:\"POST\",body:\"wrong\"}))).status,400);assert.equal((await h(new Request(\"http://local/sum\",{method:\"POST\",body:JSON.stringify({values:[\"2\"]})}))).status,400)"
+    },
+    {
+      "id": "cli-options",
+      "category": "multifile",
+      "language": "en",
+      "prompt": "Implement parseArgs(argv) using defaults.mjs: --port integer1..65535, --host string, --verbose flag, reject unknown options and missing values, preserve defaults when omitted. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "import {defaults} from \"./defaults.mjs\";export const parseArgs=a=>({...defaults,port:Number(a[1])})",
+        "src/defaults.mjs": "export const defaults={port:3000,host:\"127.0.0.1\",verbose:false}"
+      },
+      "oracle": {
+        "src/module.mjs": "import {defaults} from \"./defaults.mjs\";export function parseArgs(a){const out={...defaults};for(let i=0;i<a.length;i++){const x=a[i];if(x===\"--verbose\"){out.verbose=true;continue}if(x!==\"--port\"&&x!==\"--host\")throw Error(\"unknown\");const v=a[++i];if(!v||v.startsWith(\"--\"))throw Error(\"missing\");if(x===\"--host\")out.host=v;else{const n=Number(v);if(!Number.isInteger(n)||n<1||n>65535)throw Error(\"port\");out.port=n}}return out}"
+      },
+      "checks": "assert.deepEqual(m.parseArgs([]),{port:3000,host:\"127.0.0.1\",verbose:false});assert.deepEqual(m.parseArgs([\"--host\",\"localhost\",\"--verbose\",\"--port\",\"8080\"]),{port:8080,host:\"localhost\",verbose:true});for(const a of [[\"--port\"],[\"--unknown\"],[\"--port\",\"0\"],[\"--host\",\"--verbose\"]])assert.throws(()=>m.parseArgs(a))"
+    },
+    {
+      "id": "file-catalog",
+      "category": "filesystem",
+      "language": "en",
+      "prompt": "Fix listFiles(root) to recursively return sorted relative file paths, include dotfiles, skip node_modules/.git directories, and never follow symbolic links. Work inside this repository. Preserve exports, add useful tests if needed, run the project check, and complete the implementation.",
+      "files": {
+        "src/module.mjs": "import {readdir} from \"node:fs/promises\";export const listFiles=root=>readdir(root)"
+      },
+      "oracle": {
+        "src/module.mjs": "import {readdir} from \"node:fs/promises\";import {join,relative} from \"node:path\";export async function listFiles(root){const out=[];async function walk(dir){for(const e of await readdir(dir,{withFileTypes:true})){if(e.isSymbolicLink())continue;const p=join(dir,e.name);if(e.isDirectory()){if(e.name!==\"node_modules\"&&e.name!==\".git\")await walk(p)}else if(e.isFile())out.push(relative(root,p).split(\"\\\\\").join(\"/\"))}}await walk(root);return out.sort()}"
+      },
+      "checks": "const fs=await import(\"node:fs/promises\"),os=await import(\"node:os\"),path=await import(\"node:path\");const root=await fs.mkdtemp(path.join(os.tmpdir(),\"loong-validator-files-\"));try{await fs.mkdir(path.join(root,\"src\"));await fs.mkdir(path.join(root,\"node_modules\"));await fs.writeFile(path.join(root,\"src\",\"a.txt\"),\"a\");await fs.writeFile(path.join(root,\".env.example\"),\"x\");await fs.writeFile(path.join(root,\"node_modules\",\"skip\"),\"x\");if(process.platform!==\"win32\")await fs.symlink(root,path.join(root,\"loop\"));assert.deepEqual(await m.listFiles(root),[\".env.example\",\"src/a.txt\"])}finally{await fs.rm(root,{recursive:true,force:true})}"
+    }
+  ]
+}

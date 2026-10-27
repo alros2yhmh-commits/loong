@@ -1,42 +1,28 @@
-/* ---------------------------------------------------------------------------
-   Headless run — one task, one process, a machine-readable result.
-
-   Every agent benchmark (SWE-bench, Terminal-Bench, GAIA, τ²-bench) needs the
-   same three things a GUI never asks for:
-
-     1. a run that starts and ends without a human (trust=auto, no TTY),
-     2. a bounded step budget that is the caller's choice, not a constant,
-     3. the result as data — the final text, the tool ledger, and the diff.
-
-   Usage:
-     loong-agent run --task "<prompt>" [--workspace dir] [--provider openrouter]
-                     [--model id] [--key k] [--steps 150] [--timeout 900]
-                     [--diff out.patch] [--json]
-
-   Exit code 0 when the run completed without a fatal error, 1 otherwise.
-   The JSON goes to stdout; anything else (logs) goes to stderr, so a harness
-   can parse stdout without guessing.
-   --------------------------------------------------------------------------- */
-
+/* Headless execution keeps the user's Git index untouched. A result is successful
+   only when the runtime reports completed; prose and process survival are not proof. */
 import { execFile } from 'node:child_process'
-import { writeFileSync } from 'node:fs'
+import { lstatSync, writeFileSync } from 'node:fs'
 import { promisify } from 'node:util'
 import { randomUUID } from 'node:crypto'
+import { resolve } from 'node:path'
 import { runAgent } from './agent.ts'
-import { getWorkspace, setWorkspace } from './config.ts'
+import { getWorkspace, haveWorkspace, setWorkspace, withRunWorkspace } from './config.ts'
 import { loadRuntimeKeys } from './providers.ts'
+import { loadKeys } from './keys.ts'
 import type { ProviderConfig, ProviderId } from './providers.ts'
 import type { BaseEvent } from '@ag-ui/core'
 
 const execFileAsync = promisify(execFile)
+const PROVIDERS = new Set(['openrouter', 'ollama', 'anthropic', 'openai', 'google', 'custom'])
+export type HeadlessStatus = 'completed' | 'partial' | 'blocked' | 'budget_exhausted' | 'cancelled' | 'failed'
+const STATUSES = new Set<HeadlessStatus>(['completed', 'partial', 'blocked', 'budget_exhausted', 'cancelled', 'failed'])
 
-interface Args {
+export interface HeadlessArgs {
   task: string
   workspace?: string
   provider: ProviderId
   model: string
   key?: string
-  /** an OpenAI-compatible local server (LM Studio, llama.cpp, vLLM) */
   baseUrl?: string
   steps: number
   timeout: number
@@ -44,146 +30,183 @@ interface Args {
   json: boolean
 }
 
-function parseArgs(argv: string[]): Args {
-  const get = (name: string): string | undefined => {
-    const i = argv.indexOf(`--${name}`)
-    return i >= 0 ? argv[i + 1] : undefined
+function positiveNumber(value: string | undefined, fallback: number, name: string, max: number): number {
+  if (value === undefined) return fallback
+  const number = Number(value)
+  if (!Number.isInteger(number) || number < 1 || number > max) throw new Error(`--${name} must be an integer between 1 and ${max}.`)
+  return number
+}
+
+export function parseHeadlessArgs(argv: string[]): HeadlessArgs {
+  const allowed = new Set(['task', 'workspace', 'provider', 'model', 'key', 'base-url', 'steps', 'timeout', 'diff'])
+  const values = new Map<string, string>()
+  let json = false
+  for (let i = 0; i < argv.length; i += 1) {
+    const option = argv[i]
+    if (option === '--json') { json = true; continue }
+    if (!option.startsWith('--') || !allowed.has(option.slice(2))) throw new Error(`Unknown option: ${option}`)
+    const value = argv[++i]
+    if (value === undefined || value.startsWith('--')) throw new Error(`Missing value for ${option}.`)
+    values.set(option.slice(2), value)
   }
-  const task = get('task')
-  if (!task) {
-    process.stderr.write(
-      'usage: loong-agent run --task "<prompt>" [--workspace dir] [--provider openrouter] [--model id] [--key k] [--base-url url] [--steps 150] [--timeout 900] [--diff out.patch] [--json]\n',
-    )
-    process.exit(2)
-  }
+  const task = values.get('task')?.trim()
+  if (!task) throw new Error('Pass --task "your task" and --workspace /path/to/project. Use --json for machine-readable results.')
+  const provider = values.get('provider') ?? 'openrouter'
+  if (!PROVIDERS.has(provider)) throw new Error(`Unsupported provider: ${provider}`)
+  const model = values.get('model')?.trim() ?? process.env.LOONG_MODEL?.trim()
+  if (!model) throw new Error('Pass --model or set LOONG_MODEL. Choose a currently available tool-capable model from your provider.')
   return {
-    task,
-    workspace: get('workspace'),
-    provider: (get('provider') as ProviderId) ?? 'openrouter',
-    model: get('model') ?? 'cohere/north-mini-code:free',
-    key: get('key'),
-    baseUrl: get('base-url'),
-    steps: Number(get('steps') ?? process.env.LOONG_MAX_STEPS ?? 40),
-    timeout: Number(get('timeout') ?? 900),
-    diff: get('diff'),
-    json: argv.includes('--json'),
+    task, workspace: values.get('workspace'), provider: provider as ProviderId, model,
+    key: values.get('key'), baseUrl: values.get('base-url'),
+    steps: positiveNumber(values.get('steps') ?? process.env.LOONG_MAX_STEPS, 100, 'steps', 2000),
+    timeout: positiveNumber(values.get('timeout'), 900, 'timeout', 86_400),
+    diff: values.get('diff'), json,
   }
 }
 
-/** the final diff of a workspace, as a patch a harness can apply.
- *  `git diff` alone is blind to NEW files (untracked), and a benchmark task
- *  usually creates one — so the working tree is staged first and the staged
- *  diff is read. The index is the harness's, not the user's: a headless run
- *  owns its workspace. */
-async function workspacePatch(dir: string): Promise<string> {
+const GIT_OPTIONS = { windowsHide: true, maxBuffer: 32 * 1024 * 1024 }
+
+/** Capture tracked and new files without git add, resets, or temporary index writes.
+ * The patch describes the entire dirty workspace relative to HEAD. Benchmarks
+ * should begin in a clean disposable checkout, rather than a user's dirty tree. */
+export async function workspacePatch(dir: string): Promise<string> {
+  const git = (args: string[]) => execFileAsync('git', args, { ...GIT_OPTIONS, cwd: dir })
+  await git(['rev-parse', '--show-toplevel'])
+  const head = await git(['rev-parse', '--verify', 'HEAD']).then(() => true).catch(() => false)
+  const tracked = head ? (await git(['diff', '--binary', '--no-ext-diff', '--no-color', 'HEAD', '--'])).stdout : ''
+  const listed = await git(head
+    ? ['ls-files', '--others', '--exclude-standard', '-z']
+    : ['ls-files', '--cached', '--others', '--exclude-standard', '-z'])
+  const files = [...new Set(listed.stdout.split('\0').filter(Boolean))]
+  const additions: string[] = []
+  for (const file of files) {
+    try { lstatSync(resolve(dir, file)) } catch { continue }
+    try {
+      const { stdout } = await git(['diff', '--binary', '--no-ext-diff', '--no-color', '--no-index', '--', '/dev/null', file])
+      additions.push(stdout)
+    } catch (err) {
+      const e = err as { code?: number; stdout?: string }
+      if (e.code !== 1 || typeof e.stdout !== 'string') throw err
+      additions.push(e.stdout)
+    }
+  }
+  return tracked + additions.join('')
+}
+
+export interface HeadlessResult {
+  ok: boolean
+  status: HeadlessStatus
+  reason: string | null
+  workspace: string
+  workspaceWasDirty: boolean | null
+  provider: string
+  model: string
+  requestedModel: string
+  steps: number
+  budget: { used: number; budget: number } | null
+  tools: number
+  failedTools: number
+  promptTokens: number | null
+  completionTokens: number | null
+  seconds: number
+  text: string
+  patchChars: number
+  patchPath: string | null
+  patchError: string | null
+  error: string | null
+}
+
+function providerKey(provider: ProviderId): string | undefined {
+  const names: Partial<Record<ProviderId, string>> = {
+    openrouter: 'OPENROUTER_API_KEY', openai: 'OPENAI_API_KEY', anthropic: 'ANTHROPIC_API_KEY', google: 'GOOGLE_API_KEY', custom: 'CUSTOM_API_KEY',
+  }
+  return process.env.LOONG_PROVIDER_API_KEY?.trim() || (names[provider] ? process.env[names[provider]!]?.trim() : undefined)
+}
+
+/** Injectable runner permits testing CLI outcome handling without live credentials. */
+export async function executeHeadless(a: HeadlessArgs, runner: typeof runAgent = runAgent): Promise<HeadlessResult> {
+  if (a.workspace) setWorkspace(a.workspace)
+  if (!haveWorkspace()) throw new Error('Choose an explicit workspace with --workspace before running the agent.')
+  loadRuntimeKeys()
+  loadKeys()
+  const dir = getWorkspace()
+  const config: ProviderConfig = {
+    provider: a.provider, model: a.model,
+    ...((a.key || providerKey(a.provider)) ? { apiKey: a.key || providerKey(a.provider) } : {}),
+    ...(a.baseUrl ? { baseUrl: a.baseUrl } : {}),
+  }
+  const dirty = await execFileAsync('git', ['status', '--porcelain'], { ...GIT_OPTIONS, cwd: dir })
+    .then(({ stdout }) => Boolean(stdout)).catch(() => null)
+  const runId = randomUUID()
+  const started = Date.now()
+  let text = '', actualModel = a.model
+  let tools = 0, failed = 0, steps = 0
+  const terminal: { status: HeadlessStatus | null; promptTokens: number | null; completionTokens: number | null } = { status: null, promptTokens: null, completionTokens: null }
+  let reason: string | null = null, fatal: string | null = null
+  let budget: { used: number; budget: number } | null = null
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), a.timeout * 1000)
+  const outcome = (value: Record<string, unknown>) => {
+    if (typeof value.status === 'string' && STATUSES.has(value.status as HeadlessStatus)) terminal.status = value.status as HeadlessStatus
+    if (typeof value.reason === 'string') reason = value.reason
+    if (typeof value.model === 'string') actualModel = value.model
+    if (typeof value.promptTokens === 'number' && Number.isFinite(value.promptTokens)) terminal.promptTokens = value.promptTokens
+    if (typeof value.completionTokens === 'number' && Number.isFinite(value.completionTokens)) terminal.completionTokens = value.completionTokens
+  }
   try {
-    await execFileAsync('git', ['add', '-A'], {
-      cwd: dir,
-      windowsHide: true,
-      maxBuffer: 16 * 1024 * 1024,
-    })
-    const { stdout } = await execFileAsync('git', ['diff', '--cached', '--no-color'], {
-      cwd: dir,
-      windowsHide: true,
-      maxBuffer: 16 * 1024 * 1024,
-    })
-    return stdout
-  } catch {
-    return ''
+    await withRunWorkspace(dir, () => runner({
+      runId, threadId: runId, messages: [{ role: 'user', content: a.task }], config,
+      mode: 'agent', trust: 'auto', route: 'manual', maxSteps: a.steps,
+      securityScan: true, abortSignal: controller.signal,
+      emit: (event: BaseEvent) => {
+        const e = event as unknown as { type: string; delta?: string; name?: string; value?: Record<string, unknown>; result?: Record<string, unknown>; message?: string; isError?: boolean }
+        if (e.type === 'TEXT_MESSAGE_CONTENT' && typeof e.delta === 'string') text += e.delta
+        if (e.type === 'TOOL_CALL_START') tools += 1
+        if (e.type === 'TOOL_CALL_RESULT' && e.isError === true) failed += 1
+        if (e.type === 'STEP_STARTED') steps += 1
+        if (e.type === 'RUN_ERROR') fatal = e.message ?? 'The run failed.'
+        if (e.type === 'RUN_FINISHED') outcome(e.result ?? {})
+        if (e.name === 'loong.outcome') outcome(e.value ?? {})
+        if (e.name === 'loong.stop') {
+          const value = e.value ?? {}
+          const reasons: Record<string, HeadlessStatus> = { 'stopped-short': 'partial', 'step-limit': 'budget_exhausted', aborted: 'cancelled' }
+          if (typeof value.reason === 'string' && reasons[value.reason]) terminal.status = reasons[value.reason]
+          if (typeof value.steps === 'number' && typeof value.budget === 'number') budget = { used: value.steps, budget: value.budget }
+        }
+      },
+    }))
+  } catch (err) {
+    fatal = err instanceof Error ? err.message : String(err)
+  } finally { clearTimeout(timer) }
+  if (controller.signal.aborted) { terminal.status = 'cancelled'; reason = 'The run exceeded its timeout or was cancelled.' }
+  else if (fatal) terminal.status = 'failed'
+  else if (!terminal.status) { terminal.status = 'failed'; fatal = 'The runtime ended without a terminal outcome.' }
+  let patch = '', patchError: string | null = null
+  try { patch = await workspacePatch(dir) } catch (err) { patchError = err instanceof Error ? err.message : String(err) }
+  if (a.diff) {
+    if (patchError) { terminal.status = 'failed'; fatal = 'The requested patch could not be captured. See patchError.' }
+    else {
+      try { writeFileSync(a.diff, patch, 'utf8') } catch (err) { terminal.status = 'failed'; fatal = `Cannot write patch: ${err instanceof Error ? err.message : String(err)}` }
+    }
+  }
+  return {
+    ok: terminal.status === 'completed' && fatal === null, status: terminal.status, reason, workspace: dir, workspaceWasDirty: dirty,
+    provider: a.provider, model: actualModel, requestedModel: a.model, steps, budget, tools, failedTools: failed, promptTokens: terminal.promptTokens, completionTokens: terminal.completionTokens,
+    seconds: Math.round((Date.now() - started) / 100) / 10, text: text.trim(),
+    patchChars: patch.length, patchPath: a.diff ?? null, patchError, error: fatal,
   }
 }
 
 export async function main(argv: string[]): Promise<void> {
-  const a = parseArgs(argv)
-  if (a.workspace) setWorkspace(a.workspace)
-  loadRuntimeKeys()
-
-  const dir = getWorkspace()
-  const config: ProviderConfig = {
-    provider: a.provider,
-    model: a.model,
-    ...(a.key ? { apiKey: a.key } : {}),
-    ...(a.baseUrl ? { baseUrl: a.baseUrl } : {}),
+  try {
+    const a = parseHeadlessArgs(argv)
+    const result = await executeHeadless(a)
+    process.stdout.write(a.json ? JSON.stringify(result) + '\n' : `${result.status} · ${result.steps} steps · ${result.tools} tools · ${result.seconds}s\n${result.text}\n${result.error ?? ''}\n`)
+    process.exit(result.ok ? 0 : 1)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    if (argv.includes('--json')) process.stdout.write(JSON.stringify({ ok: false, status: 'failed', error: message }) + '\n')
+    else process.stderr.write(message + '\n')
+    process.exit(2)
   }
-
-  const runId = randomUUID()
-  const threadId = randomUUID()
-  const started = Date.now()
-
-  /* the ledger a harness reads instead of a UI */
-  let text = ''
-  let tools = 0
-  let failed = 0
-  let steps = 0
-  let stopReason = 'completed'
-  let fatal: string | null = null
-  let budget: { used: number; budget: number } | null = null
-
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), Math.max(10, a.timeout) * 1000)
-
-  await runAgent({
-    runId,
-    threadId,
-    messages: [{ role: 'user', content: a.task }],
-    config,
-    mode: 'agent',
-    trust: 'auto',
-    securityScan: false,
-    abortSignal: controller.signal,
-    emit: (event: BaseEvent) => {
-      const e = event as unknown as {
-        type: string
-        delta?: string
-        name?: string
-        value?: Record<string, unknown>
-        message?: string
-      }
-      if (e.type === 'TEXT_MESSAGE_CONTENT' && typeof e.delta === 'string') text += e.delta
-      if (e.type === 'TOOL_CALL_START') tools += 1
-      if (e.type === 'TOOL_CALL_RESULT' && (e as { ok?: boolean }).ok === false) failed += 1
-      if (e.type === 'STEP_STARTED') steps += 1
-      if (e.type === 'RUN_ERROR') fatal = e.message ?? 'run failed'
-      if (e.name === 'loong.stop') {
-        const v = e.value ?? {}
-        if (typeof v.reason === 'string') stopReason = v.reason
-        if (typeof v.steps === 'number' && typeof v.budget === 'number') {
-          budget = { used: v.steps, budget: v.budget }
-        }
-      }
-    },
-  }).catch((err: unknown) => {
-    fatal = err instanceof Error ? err.message : String(err)
-  })
-  clearTimeout(timer)
-
-  const patch = await workspacePatch(dir)
-  if (a.diff) writeFileSync(a.diff, patch, 'utf8')
-
-  const result = {
-    ok: fatal === null,
-    status: fatal ? 'failed' : stopReason,
-    workspace: dir,
-    provider: a.provider,
-    model: a.model,
-    steps,
-    budget,
-    tools,
-    failedTools: failed,
-    seconds: Math.round((Date.now() - started) / 100) / 10,
-    text: text.trim(),
-    patchChars: patch.length,
-    patchPath: a.diff ?? null,
-    error: fatal,
-  }
-
-  if (a.json) process.stdout.write(JSON.stringify(result) + '\n')
-  else {
-    process.stdout.write(
-      `${result.status} · ${result.steps} steps · ${result.tools} tools · ${result.seconds}s · ${result.patchChars} patch chars\n` +
-        (result.text ? `\n${result.text}\n` : '') +
-        (a.diff ? `\npatch written to ${a.diff}\n` : ''),
-    )
-  }
-  process.exit(result.ok ? 0 : 1)
 }
